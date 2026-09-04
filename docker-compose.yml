@@ -1,0 +1,529 @@
+# Stack Toti Cakery — SATU file, seluruhnya (9 service).
+#
+#   Server deploy : docker compose up -d
+#   Lokal         : docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#
+# Perhatikan arahnya: yang butuh `-f` sekarang LOKAL, bukan server. Itu
+# disengaja. Kalau file port-dev bernama docker-compose.override.yml, Compose
+# memuatnya OTOMATIS pada `docker compose up` polos — dan di server itu berarti
+# port 8010/8020/8080 terbuka ke internet. Karena itu namanya docker-compose.dev.yml.
+#
+# Tidak ada langkah manual sebelum `up`:
+#   • model LLM + embedding  -> disiapkan sendiri oleh deploy/ollama-entrypoint.sh
+#   • basis pengetahuan FAQ  -> chatbot-ingest mengisi ChromaDB sendiri; berkas
+#                               FAQ-nya ikut di dalam image chatbot
+#   • sertifikat TLS         -> certbot-init memasang dummy supaya nginx bisa
+#                               start, lalu certbot menukarnya dengan yang asli
+#
+# Yang TETAP manual setelah `up`, karena butuh HP: scan QR WhatsApp.
+#   curl -H "x-api-key: $WWEBJS_API_KEY" http://127.0.0.1:3000/session/start/toti
+#
+# Wajib ada di .env server: TUNNEL_ID, TUNNEL_CREDENTIALS_JSON,
+# PUBLIC_HOSTNAME, POSTGRES_PASSWORD,
+# SECRET_KEY, SERVICE_API_KEY, INTERNAL_API_KEY, WEBHOOK_TOKEN, WWEBJS_API_KEY.
+#
+# Jalan masuknya lewat Cloudflare Tunnel: mesin ini menyambung KELUAR, jadi
+# tidak butuh IP publik, tidak butuh port forward, dan tembus CGNAT. Tidak ada
+# satu port pun yang dipublikasikan ke host -- tidak ada yang bisa dipindai.
+# TLS diterminasi di edge Cloudflare, jadi tidak ada certbot di sini.
+#
+# Pemetaan hostname ditulis cloudflared-init dari PUBLIC_HOSTNAME di .env:
+#     toticakery.netra.my.id  ->  http://frontend:80
+#
+# Membangun dari sumber lokal, bukan menarik dari GHCR:
+#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+
+# ── Berkas pendukung, ditanam DI DALAM file ini ─────────────────────────────
+# Inilah yang membuat server tidak butuh apa pun selain berkas ini + .env.
+# Compose menuliskannya sendiri ke dalam container saat start; tidak ada satu
+# pun bind mount ke path host, jadi tidak ada yang perlu di-clone atau disalin.
+#
+# Semua $$ di bawah adalah $ biasa yang di-escape. Tanpa itu Compose ikut
+# menginterpolasinya dan $$host/$$uri milik nginx maupun variabel shell di
+# skrip ollama akan dikosongkan diam-diam.
+configs:
+  ollama_entrypoint:
+    content: |
+      #!/bin/sh
+      # Entrypoint ollama: menyiapkan model SENDIRI saat container start, supaya
+      # `docker compose up -d` cukup satu perintah dan tidak ada langkah manual.
+      #
+      # Urutan sumber bobot model:
+      #   1. file .gguf lokal di /modelfiles -> dipakai kalau ada (VPS tanpa internet,
+      #      atau saat menguji GGUF baru sebelum diunggah ke Hugging Face)
+      #   2. Hugging Face                   -> ditarik langsung oleh ollama, tanpa
+      #      token, karena repo modelnya publik
+      #
+      # Nama model yang dibuat SELALU $$LLM_MODEL, dan template-nya SELALU diambil dari
+      # Modelfile di repo -- bukan dari metadata GGUF. Itu yang menjamin model hasil
+      # tarikan HF berperilaku identik dengan yang diuji di laptop.
+      set -eu
+
+      ollama serve &
+      SERVER_PID=$$!
+      until ollama list >/dev/null 2>&1; do sleep 1; done
+
+      LLM=$${LLM_MODEL:-toti-qwen-1.7b-v5}
+      EMB=$${EMBEDDING_MODEL:-qwen3-embedding:0.6b}
+      HF_REF=$${LLM_HF_REF:-hf.co/LasagnaS/toti-qwen-1.7b-v5-gguf:Q4_K_M}
+      VER=$${LLM##*-}                                   # toti-qwen-1.7b-v5 -> v5
+      MODELFILE=/modelfiles/Modelfile.qwen3-1.7b-$$VER
+
+      have() {
+        ollama list | awk 'NR>1 { sub(/:latest$$/, "", $$1); print $$1 }' | grep -qx "$${1%:latest}"
+      }
+
+      if ! have "$$EMB"; then
+        echo "[init] menarik model embedding: $$EMB"
+        ollama pull "$$EMB"
+      fi
+
+      if have "$$LLM"; then
+        echo "[init] $$LLM sudah ada, dilewati"
+      elif [ ! -f "$$MODELFILE" ]; then
+        echo "[init] !! Modelfile tidak ada: $$MODELFILE" >&2
+        echo "[init]    Diturunkan dari LLM_MODEL=$$LLM. Samakan penamaannya." >&2
+      else
+        # Nama GGUF dibaca dari baris FROM Modelfile supaya keduanya tidak pernah
+        # lepas sinkron saat versi model naik.
+        GGUF=$$(awk 'tolower($$1)=="from"{print $$2; exit}' "$$MODELFILE" | sed 's#.*/##')
+        if [ -f "/modelfiles/$$GGUF" ]; then
+          echo "[init] membangun $$LLM dari berkas lokal /modelfiles/$$GGUF"
+          sed "s#^[Ff][Rr][Oo][Mm] .*#FROM /modelfiles/$$GGUF#" "$$MODELFILE" > /tmp/Modelfile
+        else
+          echo "[init] berkas lokal tidak ada — menarik dari Hugging Face: $$HF_REF"
+          echo "[init] (sekali saja, ~1,1 GB; tersimpan di volume ollama_models)"
+          ollama pull "$$HF_REF"
+          # FROM diarahkan ke model hasil tarikan, TEMPLATE & PARAMETER tetap dari
+          # Modelfile repo.
+          sed "s#^[Ff][Rr][Oo][Mm] .*#FROM $$HF_REF#" "$$MODELFILE" > /tmp/Modelfile
+        fi
+        ollama create "$$LLM" -f /tmp/Modelfile
+        echo "[init] $$LLM siap"
+      fi
+
+      wait "$$SERVER_PID"
+
+  ollama_modelfile:
+    content: |
+      # Modelfile untuk model hasil fine-tune toti-qwen-1.7b V5 (basis qwen3:1.7b).
+      # TEMPLATE + parameter disalin PERSIS dari `ollama show qwen3:1.7b --template/--parameters`
+      # (keluarga qwen3 memakai Go-template klasik).
+      # Pemakaian:
+      #   1. Taruh GGUF hasil Colab di folder ini dengan nama toti-qwen-1.7b.Q4_K_M.gguf.v5
+      #   2. ollama create toti-qwen-1.7b-v5 -f Modelfile.qwen3-1.7b-v5
+      FROM ./toti-qwen-1.7b.Q4_K_M.gguf.v5
+      TEMPLATE """
+      {{- $$lastUserIdx := -1 -}}
+      {{- range $$idx, $$msg := .Messages -}}
+      {{- if eq $$msg.Role "user" }}{{ $$lastUserIdx = $$idx }}{{ end -}}
+      {{- end }}
+      {{- if or .System .Tools }}<|im_start|>system
+      {{ if .System }}
+      {{ .System }}
+      {{- end }}
+      {{- if .Tools }}
+
+      # Tools
+
+      You may call one or more functions to assist with the user query.
+
+      You are provided with function signatures within <tools></tools> XML tags:
+      <tools>
+      {{- range .Tools }}
+      {"type": "function", "function": {{ .Function }}}
+      {{- end }}
+      </tools>
+
+      For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
+      <tool_call>
+      {"name": <function-name>, "arguments": <args-json-object>}
+      </tool_call>
+      {{- end -}}
+      <|im_end|>
+      {{ end }}
+      {{- range $$i, $$_ := .Messages }}
+      {{- $$last := eq (len (slice $$.Messages $$i)) 1 -}}
+      {{- if eq .Role "user" }}<|im_start|>user
+      {{ .Content }}
+      {{- if and $$.IsThinkSet (eq $$i $$lastUserIdx) }}
+         {{- if $$.Think -}}
+            {{- " "}}/think
+         {{- else -}}
+            {{- " "}}/no_think
+         {{- end -}}
+      {{- end }}<|im_end|>
+      {{ else if eq .Role "assistant" }}<|im_start|>assistant
+      {{ if (and $$.IsThinkSet (and .Thinking (or $$last (gt $$i $$lastUserIdx)))) -}}
+      <think>{{ .Thinking }}</think>
+      {{ end -}}
+      {{ if .Content }}{{ .Content }}
+      {{- else if .ToolCalls }}<tool_call>
+      {{ range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
+      {{ end }}</tool_call>
+      {{- end }}{{ if not $$last }}<|im_end|>
+      {{ end }}
+      {{- else if eq .Role "tool" }}<|im_start|>user
+      <tool_response>
+      {{ .Content }}
+      </tool_response><|im_end|>
+      {{ end }}
+      {{- if and (ne .Role "assistant") $$last }}<|im_start|>assistant
+      {{ if and $$.IsThinkSet (not $$.Think) -}}
+      <think>
+
+      </think>
+
+      {{ end -}}
+      {{ end }}
+      {{- end }}"""
+      PARAMETER repeat_penalty 1
+      PARAMETER stop "<|im_start|>"
+      PARAMETER stop "<|im_end|>"
+      PARAMETER temperature 0.6
+      PARAMETER top_k 20
+      PARAMETER top_p 0.95
+
+x-logging: &logging
+  # Tanpa ini log json-file tumbuh tanpa batas dan dapat memenuhi disk VPS.
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  # ── Data ──────────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-toti}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD wajib diisi di .env}
+      POSTGRES_DB: ${POSTGRES_DB:-toti}
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-toti} -d ${POSTGRES_DB:-toti}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    # Tidak dipublish. Akses dari luar lewat SSH tunnel bila perlu.
+
+  # ── Backend (FastAPI) ─────────────────────────────────────────────────────
+  backend:
+    # Image dibangun & diterbitkan oleh CI repo Backend-Cakery sendiri.
+    # Ketiga image aplikasi DI-PIN ke tag sha, bukan :latest. Alasannya: server
+    # deploy tidak boleh berubah perilaku hanya karena seseorang mem-push ke
+    # main. Menaikkan versi = ganti satu baris di .env, tidak menyentuh berkas
+    # ini: BACKEND_IMAGE / FRONTEND_IMAGE / CHATBOT_IMAGE.
+    # Untuk membangun dari sumber lokal: docker compose -f docker-compose.yml \
+    #   -f docker-compose.build.yml up -d --build
+    image: ${BACKEND_IMAGE:-ghcr.io/nicholl2/backend-cakery:sha-a98901db2cbdaa011575862b74ad73a274a15031}
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      # Password disisipkan apa adanya ke dalam URL -- hasilkan dalam bentuk
+      # heksadesimal (openssl rand -hex 24) supaya tidak ada karakter @ : /
+      # yang merusak penguraian URL.
+      DATABASE_URL: postgresql+asyncpg://${POSTGRES_USER:-toti}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-toti}
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY wajib diisi di .env}
+      # Satu-satunya sumber kebenaran untuk kunci backend <-> chatbot. Karena
+      # kedua sisi membaca variabel .env yang sama, mismatch 401 mustahil.
+      SERVICE_API_KEY: ${SERVICE_API_KEY:?SERVICE_API_KEY wajib diisi di .env}
+      # Arah sebaliknya: backend memanggil chatbot untuk mengakhiri human
+      # takeover dan mendorong pesan "pesanan siap".
+      CHATBOT_URL: http://chatbot-service:8000
+      CHATBOT_INTERNAL_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY wajib diisi di .env}
+      MIDTRANS_SERVER_KEY: ${MIDTRANS_SERVER_KEY:-}
+      MIDTRANS_IS_PRODUCTION: ${MIDTRANS_IS_PRODUCTION:-false}
+    volumes:
+      # Foto produk ditulis ke /app/static/products. Tanpa volume ini semua
+      # gambar hilang setiap container dibuat ulang.
+      # WAJIB DI-BACKUP bersama db_data.
+      - be_static:/app/static
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # HEALTHCHECK sudah ada di image (Backend-Cakery/Dockerfile).
+
+  # ── Frontend (React + nginx) ──────────────────────────────────────────────
+  frontend:
+    image: ${FRONTEND_IMAGE:-ghcr.io/azpdschool/toti-cakery-fe:sha-63643f7a3cf15afaf0ca614a1246a75b315bd7f8}
+    restart: unless-stopped
+    logging: *logging
+    depends_on:
+      # service_started, bukan service_healthy: jika backend bermasalah,
+      # halaman statis tetap tersaji dan hanya /api yang menghasilkan 502.
+      - backend
+    # TIDAK mempublish port apa pun. Satu-satunya jalan masuk adalah cloudflared
+    # di bawah, yang menjangkaunya lewat nama service di network compose. Tidak
+    # ada port yang terbuka di mesin ini -- tidak ada yang bisa dipindai.
+    #
+    # Config nginx-nya yang bawaan image (HTTP, port 80, server_name _) sudah
+    # lengkap: /api/ diproxy ke backend, /healthz, dan SPA fallback. TLS bukan
+    # urusannya lagi -- diterminasi Cloudflare di edge.
+
+  # ── LLM lokal ─────────────────────────────────────────────────────────────
+  ollama:
+    image: ollama/ollama:latest
+    restart: unless-stopped
+    logging: *logging
+    # Menyiapkan modelnya sendiri saat start: berkas .gguf lokal kalau ada,
+    # kalau tidak ditarik langsung dari Hugging Face (repo modelnya publik,
+    # jadi tanpa token). Tidak ada langkah manual sebelum `docker compose up`.
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    environment:
+      LLM_MODEL: ${LLM_MODEL:-toti-qwen-1.7b-v5}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embedding:0.6b}
+      LLM_HF_REF: ${LLM_HF_REF:-hf.co/LasagnaS/toti-qwen-1.7b-v5-gguf:Q4_K_M}
+      # Nilai bawaan keep_alive 5 menit membuang model dari memori saat idle,
+      # dan pelanggan berikutnya menanggung sekitar 15 detik pemuatan ulang.
+      OLLAMA_KEEP_ALIVE: "-1"
+    volumes:
+      # Named volume, bukan path host: VPS cukup punya Docker tanpa memasang
+      # Ollama. Isinya dibangun sendiri oleh skrip entrypoint di bawah.
+      - ollama_models:/root/.ollama
+    configs:
+      # Skrip dan Modelfile ditanam dari blok `configs` di atas -- tidak ada
+      # berkas host yang perlu ada di server.
+      - source: ollama_entrypoint
+        target: /entrypoint.sh
+      - source: ollama_modelfile
+        target: /modelfiles/Modelfile.qwen3-1.7b-v5
+    healthcheck:
+      # Image ollama tidak punya curl maupun wget; CLI-nya sendiri yang dipakai.
+      test: ["CMD", "ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      # Unduhan pertama dari Hugging Face ~1,1 GB. start_period longgar supaya
+      # container tidak dinyatakan unhealthy saat sedang menyiapkan model.
+      start_period: 900s
+    # Tidak dipublish. Hanya dipanggil chatbot dari dalam network compose.
+
+  # ── Gateway WhatsApp ──────────────────────────────────────────────────────
+  wwebjs-api:
+    image: avoylenko/wwebjs-api:latest
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      ENABLE_WEBHOOK: "true"
+      # Token adalah satu-satunya autentikasi webhook: gateway tidak dapat
+      # mengirim header, jadi rahasianya menumpang di path URL.
+      BASE_WEBHOOK_URL: http://chatbot-service:8000/webhook/whatsapp/${WEBHOOK_TOKEN:?WEBHOOK_TOKEN wajib diisi di .env}
+      API_KEY: ${WWEBJS_API_KEY:?WWEBJS_API_KEY wajib diisi di .env}
+      # Hanya event `message` yang dibutuhkan; sisanya dimatikan agar log bersih.
+      DISABLED_CALLBACKS: "message_create|message_revoke_everyone|message_reaction|media|group_join|group_leave|call"
+    volumes:
+      # Sesi WhatsApp yang sudah login. Tanpa ini QR harus dipindai ulang
+      # setiap container dibuat ulang. WAJIB DI-BACKUP.
+      # Named volume: sesi WhatsApp adalah DATA, bukan bagian dari kode.
+      - wwebjs_sessions:/usr/src/app/sessions
+    healthcheck:
+      # Image ini hanya membawa node, tanpa curl maupun wget.
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/ping',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    # Chromium (Puppeteer) crash dengan /dev/shm bawaan 64 MB. Gejalanya
+    # gateway restart-loop atau sesi WhatsApp mati sendiri.
+    shm_size: 512m
+
+  # ── Chatbot ───────────────────────────────────────────────────────────────
+  # ── Ingest FAQ ke ChromaDB (one-shot) ─────────────────────────────────────
+  # One-shot seperti certbot-init: jalan, selesai, keluar. Ini yang menghapus
+  # satu-satunya langkah manual yang tersisa untuk chatbot.
+  #
+  # Tidak ada kode maupun berkas FAQ yang perlu ada di server: teks FAQ dan
+  # ingest.py ikut DI DALAM image chatbot, jadi image yang sama yang melayani
+  # WhatsApp juga yang mengisi vektornya. Image baru dengan FAQ berubah =
+  # otomatis di-ingest ulang saat `up` berikutnya (sidik jari isi FAQ +
+  # model embedding + ukuran chunk disimpan di volume chroma_data).
+  #
+  # `--boot` berarti: tunggu model embedding benar-benar ada di Ollama, lewati
+  # kalau isi Chroma sudah cocok, dan JANGAN PERNAH keluar dengan status gagal
+  # (lihat komentar di chatbot-service tentang service_completed_successfully).
+  chatbot-ingest:
+    image: ${CHATBOT_IMAGE:-ghcr.io/kevinilhamramadhan/chatbot-cakery:sha-0b68093634a025393c0609c8cf41108bfa2ebe7d}
+    restart: "no"
+    logging: *logging
+    env_file: .env
+    environment:
+      OLLAMA_BASE_URL: http://ollama:11434
+      # Batas sabar menunggu model embedding (unduhan pertama ~600 MB, di
+      # belakang antrean LLM ~1,1 GB). Lewat batas ini: FAQ dilewati, chatbot
+      # tetap hidup, pesan errornya ada di `docker compose logs chatbot-ingest`.
+      INGEST_WAIT_TIMEOUT_SECONDS: ${INGEST_WAIT_TIMEOUT_SECONDS:-1800}
+    volumes:
+      - chroma_data:/app/chroma_db
+    command: ["python", "knowledge_base/ingest.py", "--boot"]
+    # Image chatbot membawa HEALTHCHECK yang mengetuk http://127.0.0.1:8000/health.
+    # Itu benar untuk service-nya, tapi job ini tidak menjalankan web server apa
+    # pun -- probe-nya pasti gagal dan `docker compose ps` menampilkannya
+    # "unhealthy" seolah ada yang rusak. Dimatikan; keberhasilannya dibaca dari
+    # exit code, bukan dari port.
+    healthcheck:
+      disable: true
+    depends_on:
+      ollama:
+        # service_healthy = server ollama sudah menjawab. Modelnya sendiri
+        # mungkin masih diunduh; itu yang ditunggu oleh --boot.
+        condition: service_healthy
+
+  chatbot-service:
+    image: ${CHATBOT_IMAGE:-ghcr.io/kevinilhamramadhan/chatbot-cakery:sha-0b68093634a025393c0609c8cf41108bfa2ebe7d}
+    restart: unless-stopped
+    logging: *logging
+    # Sengaja TIDAK memakai `env_file: .env`. Dengan mendaftarkan variabelnya di
+    # sini lengkap dengan nilai bawaan, .env di server cukup memuat yang benar-
+    # benar rahasia atau khas toko -- bukan salinan puluhan tunable. Efek
+    # sampingnya bagus: chatbot tidak lagi ikut menerima POSTGRES_PASSWORD dan
+    # SECRET_KEY yang bukan urusannya.
+    environment:
+      # Topologi antar-container.
+      WWEBJS_BASE_URL: http://wwebjs-api:3000
+      OLLAMA_BASE_URL: http://ollama:11434
+      BACKEND_BASE_URL: http://backend:8000
+      # Rahasia -- wajib ada di .env.
+      WEBHOOK_TOKEN: ${WEBHOOK_TOKEN:?WEBHOOK_TOKEN wajib diisi di .env}
+      INTERNAL_API_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY wajib diisi di .env}
+      WWEBJS_API_KEY: ${WWEBJS_API_KEY:?WWEBJS_API_KEY wajib diisi di .env}
+      BACKEND_SERVICE_API_KEY: ${SERVICE_API_KEY:?SERVICE_API_KEY wajib diisi di .env}
+      # Khas toko -- isi di .env, kalau tidak balasan ke pelanggan salah alamat.
+      ADMIN_WA_NUMBER: ${ADMIN_WA_NUMBER:-}
+      OWNER_WA_NUMBERS: ${OWNER_WA_NUMBERS:-}
+      STORE_NAME: ${STORE_NAME:-Toti Cakery}
+      STORE_ADDRESS: ${STORE_ADDRESS:-alamat belum diisi di .env}
+      # Model: harus sama dengan yang disiapkan service ollama di atas.
+      LLM_MODEL: ${LLM_MODEL:-toti-qwen-1.7b-v5}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embedding:0.6b}
+      # Tunable -- bawaannya sudah benar untuk produksi, timpa lewat .env bila perlu.
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_MESSAGE_BODIES: ${LOG_MESSAGE_BODIES:-false}
+      LLM_NUM_CTX: ${LLM_NUM_CTX:-32768}
+      LLM_NUM_PREDICT: ${LLM_NUM_PREDICT:-384}
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:--1}
+      WARMUP_ON_STARTUP: ${WARMUP_ON_STARTUP:-true}
+      RAG_SIMILARITY_THRESHOLD: ${RAG_SIMILARITY_THRESHOLD:-0.40}
+      DATA_RETENTION_DAYS: ${DATA_RETENTION_DAYS:-90}
+      PAYMENT_TIMEOUT_MINUTES: ${PAYMENT_TIMEOUT_MINUTES:-30}
+      ALLOW_DOWN_PAYMENT: ${ALLOW_DOWN_PAYMENT:-true}
+      DOWN_PAYMENT_PERCENTAGE: ${DOWN_PAYMENT_PERCENTAGE:-0.50}
+      AUTOFILL_PHONE_FROM_WA: ${AUTOFILL_PHONE_FROM_WA:-true}
+      TAKEOVER_EXPIRY_DAYS: ${TAKEOVER_EXPIRY_DAYS:-7}
+      WA_VERIFICATION_ENABLED: ${WA_VERIFICATION_ENABLED:-false}
+      # Chroma hidup di dalam container, menulis ke volume chroma_data.
+      CHROMA_PERSIST_DIR: /app/chroma_db
+      # Jalur absolut ke named volume. Nilai relatif "./toti_chatbot.db" di
+      # .env memaksa file SQLite di-bind mount, dan Docker membuatkan
+      # DIREKTORI bila file itu belum ada -- chatbot lalu gagal start.
+      # Named volume menghilangkan jebakan itu sekaligus membuat datanya
+      # bertahan tanpa bergantung pada file di host.
+      DATABASE_URL: sqlite+aiosqlite:////app/data/toti_chatbot.db
+    volumes:
+      - chatbot_data:/app/data
+      # Vektor FAQ. Diisi oleh chatbot-ingest sebelum service ini start; di sini
+      # hanya dibaca. Isi ulang paksa (mis. sesudah mengedit FAQ di luar image):
+      #   docker compose run --rm chatbot-ingest python knowledge_base/ingest.py
+      - chroma_data:/app/chroma_db
+    healthcheck:
+      # Image ini hanya membawa python, tanpa curl maupun wget.
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=5).status==200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    depends_on:
+      # service_started, bukan service_healthy: chatbot sengaja tetap jalan
+      # saat backend atau ollama belum siap. Tool-nya menjawab "sedang tidak
+      # bisa diambil" alih-alih seluruh service ikut mati.
+      wwebjs-api:
+        condition: service_started
+      ollama:
+        condition: service_started
+      backend:
+        condition: service_started
+      # Satu-satunya syarat keras, dan alasannya BUKAN "FAQ harus ada":
+      # ChromaDB persisten berbasis SQLite, jadi penulis dan pembaca yang
+      # jalan bersamaan bisa saling mengunci. Menunggu ingest selesai membuat
+      # keduanya tidak pernah bertemu. Aman dijadikan syarat keras karena
+      # `ingest.py --boot` memang dirancang tidak pernah gagal — kegagalan
+      # ingest tidak boleh membuat chatbot tidak pernah hidup.
+      chatbot-ingest:
+        condition: service_completed_successfully
+
+  # ── Jalan masuk dari internet ─────────────────────────────────────────────
+  # Tunnel KELUAR ke Cloudflare: mesin ini yang memulai koneksi, jadi tidak
+  # butuh IP publik, tidak butuh port forward, dan tembus CGNAT. Tidak ada satu
+  # port pun yang terbuka di sisi kita. TLS diterminasi di edge Cloudflare,
+  # jadi tidak ada certbot di sini.
+  #
+  # Ini varian LOCALLY-MANAGED (kredensial dibuat lewat CLI di laptop), bukan
+  # varian token dari dashboard Zero Trust. Alasannya praktis: onboarding Zero
+  # Trust meminta data kartu kredit walau tagihannya nol, sedangkan jalur CLI
+  # hanya butuh akun Cloudflare biasa yang sudah memegang zone-nya.
+  #
+  # Image cloudflared tidak membawa shell, jadi berkasnya ditulis oleh init
+  # container di bawah -- itu yang menjaga janji "server cuma perlu 2 berkas":
+  # kredensialnya menumpang di .env, bukan berkas ketiga yang harus disalin.
+  cloudflared-init:
+    image: alpine:3
+    restart: "no"
+    logging: *logging
+    environment:
+      TUNNEL_ID: ${TUNNEL_ID:?TUNNEL_ID wajib diisi di .env -- lihat .env.server}
+      TUNNEL_CREDENTIALS_JSON: ${TUNNEL_CREDENTIALS_JSON:?TUNNEL_CREDENTIALS_JSON wajib diisi di .env}
+      PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME:?PUBLIC_HOSTNAME wajib diisi di .env, mis. toticakery.netra.my.id}
+    volumes:
+      - cloudflared_conf:/etc/cloudflared
+    entrypoint: /bin/sh
+    command:
+      - -c
+      - |
+        set -eu
+        printf '%s' "$$TUNNEL_CREDENTIALS_JSON" > /etc/cloudflared/creds.json
+        # Image cloudflared jalan sebagai user 65532, BUKAN root. chmod 600
+        # milik root membuatnya "permission denied" dan container restart-loop
+        # -- ini sudah pernah terjadi, jangan diulang. Kepemilikannya
+        # dipindahkan, bukan izinnya dilonggarkan.
+        cat > /etc/cloudflared/config.yml <<EOF
+        tunnel: $$TUNNEL_ID
+        credentials-file: /etc/cloudflared/creds.json
+        ingress:
+          - hostname: $$PUBLIC_HOSTNAME
+            service: http://frontend:80
+          - service: http_status:404
+        EOF
+        # Image cloudflared jalan sebagai user 65532, BUKAN root. Berkas milik
+        # root dengan mode 600 membuatnya "permission denied" lalu restart-loop
+        # -- sudah pernah terjadi, jangan diulang. Kepemilikannya yang
+        # dipindahkan, bukan izinnya yang dilonggarkan.
+        chown 65532:65532 /etc/cloudflared/creds.json /etc/cloudflared/config.yml
+        chmod 600 /etc/cloudflared/creds.json
+        echo "[tunnel] config siap: $$PUBLIC_HOSTNAME -> http://frontend:80"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    logging: *logging
+    # --no-autoupdate: versinya ditentukan tag image, jangan berubah sendiri
+    # di tengah demo.
+    command: ["--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "tunnel", "run"]
+    volumes:
+      - cloudflared_conf:/etc/cloudflared:ro
+    depends_on:
+      cloudflared-init:
+        condition: service_completed_successfully
+      frontend:
+        condition: service_started
+
+volumes:
+  db_data:        # database backend -- WAJIB di-backup
+  be_static:      # upload foto produk -- WAJIB di-backup
+  ollama_models:  # model LLM + embedding, disiapkan deploy/ollama-entrypoint.sh
+  chatbot_data:   # SQLite chatbot (percakapan, order draft)
+  wwebjs_sessions:  # sesi WhatsApp -- hilang = harus scan QR ulang
+  chroma_data:      # vektor FAQ; bisa dibangun ulang dengan ingest.py
+  cloudflared_conf: # config + kredensial tunnel, ditulis cloudflared-init

@@ -1,0 +1,24 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Repo ini SENGAJA hanya memuat dua berkas: docker-compose.yml dan .env.server.
+# Itu saja yang dibutuhkan untuk deploy — compose menarik semua image jadi dari
+# GHCR, dan seluruh berkas pendukung (entrypoint ollama, Modelfile) sudah
+# tertanam di dalam compose sebagai `configs`.
+#
+# Polanya WHITELIST: abaikan semua, lalu izinkan satu per satu. Ini disengaja.
+# Dengan daftar-hitam biasa, berkas rahasia yang baru muncul nanti (.env.bak,
+# creds.json, dump database) akan ikut ter-commit diam-diam. Dengan cara ini,
+# apa pun yang baru otomatis diabaikan sampai kamu izinkan sendiri.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 1. Abaikan segalanya
+*
+
+# 2. Kecuali yang ini
+!docker-compose.yml
+!.env.server
+!.gitignore
+!README.md
+
+# .env TIDAK ada di daftar putih, dan itu memang tujuannya: isinya password DB,
+# SECRET_KEY, token webhook, dan TUNNEL_CREDENTIALS_JSON. Yang di-commit adalah
+# .env.server, template berisi nama variabel dengan nilai kosong.
