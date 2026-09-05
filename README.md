@@ -17,26 +17,38 @@ Ketiganya (compose, `.env`, dan folder `model/`) **harus ada di server**.
 
 ## Menjalankan di server
 
-Salin dari laptop:
+Cara paling ringkas, langsung dari repo ini:
+
+```bash
+git clone https://github.com/kevinilhamramadhan/Deploy-Toti-Cakery.git ~/toti
+cd ~/toti
+cp .env.server .env && chmod 600 .env
+nano .env                 # isi 9 nilai wajib, lihat komentar di dalamnya
+docker compose up -d
+```
+
+Server tanpa akses git? salin manual dari laptop — `-r` wajib karena `model/`
+adalah folder:
 
 ```bash
 scp -r docker-compose.yml .env.server model/ user@server:~/toti/
 ```
 
-Lalu di server:
+Setelah menyalin, pastikan foldernya ikut terbawa:
 
 ```bash
-cd ~/toti
-mv .env.server .env && chmod 600 .env
-nano .env                 # isi 9 nilai wajib, lihat komentar di dalamnya
-docker compose up -d
+ls model/     # harus ada dua berkas
 ```
+
+Ini bukan kehati-hatian berlebihan: bila `model/` tertinggal,
+`docker compose config` **tetap melaporkan valid**, dan yang gagal adalah `up`
+dengan pesan `bind source path does not exist`.
 
 Tidak ada langkah manual lain sebelum `up`. Yang berjalan otomatis:
 
 - image backend, frontend, dan chatbot ditarik dari GHCR;
 - **ollama** menarik model dari Hugging Face (~1,1 GB) lalu membangunnya dari
-  Modelfile yang tertanam di compose, dan menarik model embedding;
+  `model/Modelfile.qwen3-1.7b-v5`, dan menarik model embedding (~600 MB);
 - **chatbot-ingest** mengisi ChromaDB dari berkas FAQ di dalam image;
 - **cloudflared** membuka tunnel keluar ke Cloudflare — tidak ada port yang
   dibuka di mesin ini, dan tidak butuh IP publik maupun port forward.
