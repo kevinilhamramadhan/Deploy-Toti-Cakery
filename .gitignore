@@ -19,6 +19,13 @@
 !.gitignore
 !README.md
 
+# Konfigurasi model. Folder-nya harus diizinkan lebih dulu, baru isinya --
+# begitulah cara pola whitelist bekerja pada direktori: kalau folder induknya
+# masih diabaikan, git tidak akan pernah melihat berkas di dalamnya.
+!model/
+!model/ollama-entrypoint.sh
+!model/Modelfile.qwen3-1.7b-v5
+
 # .env TIDAK ada di daftar putih, dan itu memang tujuannya: isinya password DB,
 # SECRET_KEY, token webhook, dan TUNNEL_CREDENTIALS_JSON. Yang di-commit adalah
 # .env.server, template berisi nama variabel dengan nilai kosong.

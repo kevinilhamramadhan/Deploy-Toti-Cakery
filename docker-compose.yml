@@ -9,7 +9,8 @@
 # port 8010/8020/8080 terbuka ke internet. Karena itu namanya docker-compose.dev.yml.
 #
 # Tidak ada langkah manual sebelum `up`:
-#   • model LLM + embedding  -> disiapkan sendiri oleh deploy/ollama-entrypoint.sh
+#   • model LLM + embedding  -> disiapkan sendiri oleh skrip entrypoint yang
+#                               tertanam di blok `configs` di bawah
 #   • basis pengetahuan FAQ  -> chatbot-ingest mengisi ChromaDB sendiri; berkas
 #                               FAQ-nya ikut di dalam image chatbot
 #   • sertifikat TLS         -> certbot-init memasang dummy supaya nginx bisa
@@ -22,6 +23,8 @@
 # PUBLIC_HOSTNAME, POSTGRES_PASSWORD,
 # SECRET_KEY, SERVICE_API_KEY, INTERNAL_API_KEY, WEBHOOK_TOKEN, WWEBJS_API_KEY.
 #
+# Yang perlu ada di server: docker-compose.yml, .env, dan folder model/.
+#
 # Jalan masuknya lewat Cloudflare Tunnel: mesin ini menyambung KELUAR, jadi
 # tidak butuh IP publik, tidak butuh port forward, dan tembus CGNAT. Tidak ada
 # satu port pun yang dipublikasikan ke host -- tidak ada yang bisa dipindai.
@@ -33,156 +36,29 @@
 # Membangun dari sumber lokal, bukan menarik dari GHCR:
 #   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
 
-# ── Berkas pendukung, ditanam DI DALAM file ini ─────────────────────────────
-# Inilah yang membuat server tidak butuh apa pun selain berkas ini + .env.
-# Compose menuliskannya sendiri ke dalam container saat start; tidak ada satu
-# pun bind mount ke path host, jadi tidak ada yang perlu di-clone atau disalin.
+# ── Berkas pendukung ────────────────────────────────────────────────────────
+# Konfigurasi model dipisah ke folder model/ supaya mudah dibaca dan disunting
+# tanpa mengaduk-aduk berkas ini. Compose menyalinnya ke dalam container saat
+# start (bukan bind mount), jadi container tetap menerimanya sebagai berkas
+# biasa di jalur yang ditentukan tiap service.
 #
-# Semua $$ di bawah adalah $ biasa yang di-escape. Tanpa itu Compose ikut
-# menginterpolasinya dan $$host/$$uri milik nginx maupun variabel shell di
-# skrip ollama akan dikosongkan diam-diam.
+# KONSEKUENSI: kedua berkas ini WAJIB ikut disalin ke server. Perintah deploy
+# menjadi:
+#     scp -r docker-compose.yml .env.server model/ user@server:~/toti/
+#
+# Kalau folder model/ tertinggal, `docker compose config` TETAP LOLOS -- ia
+# tidak memeriksa keberadaan berkas. Yang gagal adalah `up`, dengan pesan:
+#     bind source path does not exist: .../model/ollama-entrypoint.sh
+# Jadi jangan mengandalkan `config` untuk memastikan penyalinan sudah lengkap;
+# periksa foldernya dengan `ls model/`.
+#
+# Catatan teknis: Compose mewujudkan `configs.file` sebagai bind mount. Karena
+# itu stack ini tidak lagi bebas bind mount seperti saat isinya ditanam inline.
 configs:
   ollama_entrypoint:
-    content: |
-      #!/bin/sh
-      # Entrypoint ollama: menyiapkan model SENDIRI saat container start, supaya
-      # `docker compose up -d` cukup satu perintah dan tidak ada langkah manual.
-      #
-      # Urutan sumber bobot model:
-      #   1. file .gguf lokal di /modelfiles -> dipakai kalau ada (VPS tanpa internet,
-      #      atau saat menguji GGUF baru sebelum diunggah ke Hugging Face)
-      #   2. Hugging Face                   -> ditarik langsung oleh ollama, tanpa
-      #      token, karena repo modelnya publik
-      #
-      # Nama model yang dibuat SELALU $$LLM_MODEL, dan template-nya SELALU diambil dari
-      # Modelfile di repo -- bukan dari metadata GGUF. Itu yang menjamin model hasil
-      # tarikan HF berperilaku identik dengan yang diuji di laptop.
-      set -eu
-
-      ollama serve &
-      SERVER_PID=$$!
-      until ollama list >/dev/null 2>&1; do sleep 1; done
-
-      LLM=$${LLM_MODEL:-toti-qwen-1.7b-v5}
-      EMB=$${EMBEDDING_MODEL:-qwen3-embedding:0.6b}
-      HF_REF=$${LLM_HF_REF:-hf.co/LasagnaS/toti-qwen-1.7b-v5-gguf:Q4_K_M}
-      VER=$${LLM##*-}                                   # toti-qwen-1.7b-v5 -> v5
-      MODELFILE=/modelfiles/Modelfile.qwen3-1.7b-$$VER
-
-      have() {
-        ollama list | awk 'NR>1 { sub(/:latest$$/, "", $$1); print $$1 }' | grep -qx "$${1%:latest}"
-      }
-
-      if ! have "$$EMB"; then
-        echo "[init] menarik model embedding: $$EMB"
-        ollama pull "$$EMB"
-      fi
-
-      if have "$$LLM"; then
-        echo "[init] $$LLM sudah ada, dilewati"
-      elif [ ! -f "$$MODELFILE" ]; then
-        echo "[init] !! Modelfile tidak ada: $$MODELFILE" >&2
-        echo "[init]    Diturunkan dari LLM_MODEL=$$LLM. Samakan penamaannya." >&2
-      else
-        # Nama GGUF dibaca dari baris FROM Modelfile supaya keduanya tidak pernah
-        # lepas sinkron saat versi model naik.
-        GGUF=$$(awk 'tolower($$1)=="from"{print $$2; exit}' "$$MODELFILE" | sed 's#.*/##')
-        if [ -f "/modelfiles/$$GGUF" ]; then
-          echo "[init] membangun $$LLM dari berkas lokal /modelfiles/$$GGUF"
-          sed "s#^[Ff][Rr][Oo][Mm] .*#FROM /modelfiles/$$GGUF#" "$$MODELFILE" > /tmp/Modelfile
-        else
-          echo "[init] berkas lokal tidak ada — menarik dari Hugging Face: $$HF_REF"
-          echo "[init] (sekali saja, ~1,1 GB; tersimpan di volume ollama_models)"
-          ollama pull "$$HF_REF"
-          # FROM diarahkan ke model hasil tarikan, TEMPLATE & PARAMETER tetap dari
-          # Modelfile repo.
-          sed "s#^[Ff][Rr][Oo][Mm] .*#FROM $$HF_REF#" "$$MODELFILE" > /tmp/Modelfile
-        fi
-        ollama create "$$LLM" -f /tmp/Modelfile
-        echo "[init] $$LLM siap"
-      fi
-
-      wait "$$SERVER_PID"
-
+    file: ./model/ollama-entrypoint.sh
   ollama_modelfile:
-    content: |
-      # Modelfile untuk model hasil fine-tune toti-qwen-1.7b V5 (basis qwen3:1.7b).
-      # TEMPLATE + parameter disalin PERSIS dari `ollama show qwen3:1.7b --template/--parameters`
-      # (keluarga qwen3 memakai Go-template klasik).
-      # Pemakaian:
-      #   1. Taruh GGUF hasil Colab di folder ini dengan nama toti-qwen-1.7b.Q4_K_M.gguf.v5
-      #   2. ollama create toti-qwen-1.7b-v5 -f Modelfile.qwen3-1.7b-v5
-      FROM ./toti-qwen-1.7b.Q4_K_M.gguf.v5
-      TEMPLATE """
-      {{- $$lastUserIdx := -1 -}}
-      {{- range $$idx, $$msg := .Messages -}}
-      {{- if eq $$msg.Role "user" }}{{ $$lastUserIdx = $$idx }}{{ end -}}
-      {{- end }}
-      {{- if or .System .Tools }}<|im_start|>system
-      {{ if .System }}
-      {{ .System }}
-      {{- end }}
-      {{- if .Tools }}
-
-      # Tools
-
-      You may call one or more functions to assist with the user query.
-
-      You are provided with function signatures within <tools></tools> XML tags:
-      <tools>
-      {{- range .Tools }}
-      {"type": "function", "function": {{ .Function }}}
-      {{- end }}
-      </tools>
-
-      For each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:
-      <tool_call>
-      {"name": <function-name>, "arguments": <args-json-object>}
-      </tool_call>
-      {{- end -}}
-      <|im_end|>
-      {{ end }}
-      {{- range $$i, $$_ := .Messages }}
-      {{- $$last := eq (len (slice $$.Messages $$i)) 1 -}}
-      {{- if eq .Role "user" }}<|im_start|>user
-      {{ .Content }}
-      {{- if and $$.IsThinkSet (eq $$i $$lastUserIdx) }}
-         {{- if $$.Think -}}
-            {{- " "}}/think
-         {{- else -}}
-            {{- " "}}/no_think
-         {{- end -}}
-      {{- end }}<|im_end|>
-      {{ else if eq .Role "assistant" }}<|im_start|>assistant
-      {{ if (and $$.IsThinkSet (and .Thinking (or $$last (gt $$i $$lastUserIdx)))) -}}
-      <think>{{ .Thinking }}</think>
-      {{ end -}}
-      {{ if .Content }}{{ .Content }}
-      {{- else if .ToolCalls }}<tool_call>
-      {{ range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
-      {{ end }}</tool_call>
-      {{- end }}{{ if not $$last }}<|im_end|>
-      {{ end }}
-      {{- else if eq .Role "tool" }}<|im_start|>user
-      <tool_response>
-      {{ .Content }}
-      </tool_response><|im_end|>
-      {{ end }}
-      {{- if and (ne .Role "assistant") $$last }}<|im_start|>assistant
-      {{ if and $$.IsThinkSet (not $$.Think) -}}
-      <think>
-
-      </think>
-
-      {{ end -}}
-      {{ end }}
-      {{- end }}"""
-      PARAMETER repeat_penalty 1
-      PARAMETER stop "<|im_start|>"
-      PARAMETER stop "<|im_end|>"
-      PARAMETER temperature 0.6
-      PARAMETER top_k 20
-      PARAMETER top_p 0.95
+    file: ./model/Modelfile.qwen3-1.7b-v5
 
 x-logging: &logging
   # Tanpa ini log json-file tumbuh tanpa batas dan dapat memenuhi disk VPS.
@@ -282,7 +158,7 @@ services:
       OLLAMA_KEEP_ALIVE: "-1"
     volumes:
       # Named volume, bukan path host: VPS cukup punya Docker tanpa memasang
-      # Ollama. Isinya dibangun sendiri oleh skrip entrypoint di bawah.
+      # Ollama. Isinya dibangun sendiri oleh skrip entrypoint dari blok configs.
       - ollama_models:/root/.ollama
     configs:
       # Skrip dan Modelfile ditanam dari blok `configs` di atas -- tidak ada
@@ -484,10 +360,6 @@ services:
       - |
         set -eu
         printf '%s' "$$TUNNEL_CREDENTIALS_JSON" > /etc/cloudflared/creds.json
-        # Image cloudflared jalan sebagai user 65532, BUKAN root. chmod 600
-        # milik root membuatnya "permission denied" dan container restart-loop
-        # -- ini sudah pernah terjadi, jangan diulang. Kepemilikannya
-        # dipindahkan, bukan izinnya dilonggarkan.
         cat > /etc/cloudflared/config.yml <<EOF
         tunnel: $$TUNNEL_ID
         credentials-file: /etc/cloudflared/creds.json
@@ -522,7 +394,7 @@ services:
 volumes:
   db_data:        # database backend -- WAJIB di-backup
   be_static:      # upload foto produk -- WAJIB di-backup
-  ollama_models:  # model LLM + embedding, disiapkan deploy/ollama-entrypoint.sh
+  ollama_models:  # model LLM + embedding, disiapkan entrypoint di blok configs
   chatbot_data:   # SQLite chatbot (percakapan, order draft)
   wwebjs_sessions:  # sesi WhatsApp -- hilang = harus scan QR ulang
   chroma_data:      # vektor FAQ; bisa dibangun ulang dengan ingest.py

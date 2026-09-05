@@ -4,17 +4,30 @@ Repo ini hanya berisi **skrip deploy**, bukan kode. Kode ketiga komponen ada di
 reponya masing-masing; compose menarik image jadi dari GitHub Container
 Registry, dan bobot model chatbot ditarik dari Hugging Face.
 
-Isinya sengaja cuma dua berkas:
+Isinya:
 
 | Berkas | Isi |
 |---|---|
-| `docker-compose.yml` | Seluruh stack, 9 service. Entrypoint ollama dan Modelfile tertanam di dalamnya sebagai `configs`, jadi tidak ada berkas pendukung yang perlu ikut disalin. |
-| `.env.server` | Template konfigurasi. Salin jadi `.env` di server, isi nilainya. |
+| `docker-compose.yml` | Seluruh stack, 9 service |
+| `.env.server` | Template konfigurasi. Salin jadi `.env` di server, isi nilainya |
+| `model/ollama-entrypoint.sh` | Skrip yang menyiapkan model AI saat container start |
+| `model/Modelfile.qwen3-1.7b-v5` | Resep model: bobot, template percakapan, parameter |
+
+Ketiganya (compose, `.env`, dan folder `model/`) **harus ada di server**.
 
 ## Menjalankan di server
 
+Salin dari laptop:
+
 ```bash
-cp .env.server .env && chmod 600 .env
+scp -r docker-compose.yml .env.server model/ user@server:~/toti/
+```
+
+Lalu di server:
+
+```bash
+cd ~/toti
+mv .env.server .env && chmod 600 .env
 nano .env                 # isi 9 nilai wajib, lihat komentar di dalamnya
 docker compose up -d
 ```
