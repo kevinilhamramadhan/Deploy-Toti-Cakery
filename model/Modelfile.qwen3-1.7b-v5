@@ -6,9 +6,9 @@
 #   2. ollama create toti-qwen-1.7b-v5 -f Modelfile.qwen3-1.7b-v5
 FROM ./toti-qwen-1.7b.Q4_K_M.gguf.v5
 TEMPLATE """
-{{- $$lastUserIdx := -1 -}}
-{{- range $$idx, $$msg := .Messages -}}
-{{- if eq $$msg.Role "user" }}{{ $$lastUserIdx = $$idx }}{{ end -}}
+{{- $lastUserIdx := -1 -}}
+{{- range $idx, $msg := .Messages -}}
+{{- if eq $msg.Role "user" }}{{ $lastUserIdx = $idx }}{{ end -}}
 {{- end }}
 {{- if or .System .Tools }}<|im_start|>system
 {{ if .System }}
@@ -34,34 +34,34 @@ For each function call, return a json object with function name and arguments wi
 {{- end -}}
 <|im_end|>
 {{ end }}
-{{- range $$i, $$_ := .Messages }}
-{{- $$last := eq (len (slice $$.Messages $$i)) 1 -}}
+{{- range $i, $_ := .Messages }}
+{{- $last := eq (len (slice $.Messages $i)) 1 -}}
 {{- if eq .Role "user" }}<|im_start|>user
 {{ .Content }}
-{{- if and $$.IsThinkSet (eq $$i $$lastUserIdx) }}
-   {{- if $$.Think -}}
+{{- if and $.IsThinkSet (eq $i $lastUserIdx) }}
+   {{- if $.Think -}}
       {{- " "}}/think
    {{- else -}}
       {{- " "}}/no_think
    {{- end -}}
 {{- end }}<|im_end|>
 {{ else if eq .Role "assistant" }}<|im_start|>assistant
-{{ if (and $$.IsThinkSet (and .Thinking (or $$last (gt $$i $$lastUserIdx)))) -}}
+{{ if (and $.IsThinkSet (and .Thinking (or $last (gt $i $lastUserIdx)))) -}}
 <think>{{ .Thinking }}</think>
 {{ end -}}
 {{ if .Content }}{{ .Content }}
 {{- else if .ToolCalls }}<tool_call>
 {{ range .ToolCalls }}{"name": "{{ .Function.Name }}", "arguments": {{ .Function.Arguments }}}
 {{ end }}</tool_call>
-{{- end }}{{ if not $$last }}<|im_end|>
+{{- end }}{{ if not $last }}<|im_end|>
 {{ end }}
 {{- else if eq .Role "tool" }}<|im_start|>user
 <tool_response>
 {{ .Content }}
 </tool_response><|im_end|>
 {{ end }}
-{{- if and (ne .Role "assistant") $$last }}<|im_start|>assistant
-{{ if and $$.IsThinkSet (not $$.Think) -}}
+{{- if and (ne .Role "assistant") $last }}<|im_start|>assistant
+{{ if and $.IsThinkSet (not $.Think) -}}
 <think>
 
 </think>
