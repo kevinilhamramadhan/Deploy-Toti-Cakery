@@ -106,13 +106,29 @@ services:
   # ── Backend (FastAPI) ─────────────────────────────────────────────────────
   backend:
     # Image dibangun & diterbitkan oleh CI repo Backend-Cakery sendiri.
-    # Ketiga image aplikasi DI-PIN ke tag sha, bukan :latest. Alasannya: server
-    # deploy tidak boleh berubah perilaku hanya karena seseorang mem-push ke
-    # main. Menaikkan versi = ganti satu baris di .env, tidak menyentuh berkas
-    # ini: BACKEND_IMAGE / FRONTEND_IMAGE / CHATBOT_IMAGE.
+    #
+    # Ketiga image aplikasi memakai :latest, dan `pull_policy: always` membuat
+    # `docker compose up -d` benar-benar menarik versi terbaru. Tanpa baris itu
+    # Compose menganggap tag yang sudah ada di disk sudah cukup, dan server akan
+    # tetap menjalankan image lama walau CI sudah menerbitkan yang baru --
+    # kegagalan diam yang mahal untuk didiagnosis.
+    #
+    # KONSEKUENSI yang perlu disadari: server ikut berubah perilaku begitu ada
+    # yang mem-push ke main dan CI-nya hijau. Itu pertukaran yang disengaja --
+    # ditukar dengan tidak perlu lagi menyunting sha setiap kali deploy.
+    #
+    # Untuk menguncinya kembali, mis. saat rilis atau saat perlu mundur ke versi
+    # yang diketahui baik, isi di .env tanpa menyentuh berkas ini:
+    #   BACKEND_IMAGE=ghcr.io/nicholl2/backend-cakery:sha-<commit>
+    #   FRONTEND_IMAGE=ghcr.io/azpdschool/toti-cakery-fe:sha-<commit>
+    #   CHATBOT_IMAGE=ghcr.io/kevinilhamramadhan/chatbot-cakery:sha-<commit>
+    # CI ketiga repo menerbitkan tag sha-<commit> berdampingan dengan :latest,
+    # jadi versi lama selalu tersedia untuk dipanggil kembali.
+    #
     # Untuk membangun dari sumber lokal: docker compose -f docker-compose.yml \
     #   -f docker-compose.build.yml up -d --build
-    image: ${BACKEND_IMAGE:-ghcr.io/nicholl2/backend-cakery:sha-a98901db2cbdaa011575862b74ad73a274a15031}
+    image: ${BACKEND_IMAGE:-ghcr.io/nicholl2/backend-cakery:latest}
+    pull_policy: always
     restart: unless-stopped
     logging: *logging
     environment:
@@ -157,7 +173,8 @@ services:
 
   # ── Frontend (React + nginx) ──────────────────────────────────────────────
   frontend:
-    image: ${FRONTEND_IMAGE:-ghcr.io/azpdschool/toti-cakery-fe:sha-63643f7a3cf15afaf0ca614a1246a75b315bd7f8}
+    image: ${FRONTEND_IMAGE:-ghcr.io/azpdschool/toti-cakery-fe:latest}
+    pull_policy: always
     restart: unless-stopped
     logging: *logging
     depends_on:
@@ -254,7 +271,8 @@ services:
   # kalau isi Chroma sudah cocok, dan JANGAN PERNAH keluar dengan status gagal
   # (lihat komentar di chatbot-service tentang service_completed_successfully).
   chatbot-ingest:
-    image: ${CHATBOT_IMAGE:-ghcr.io/kevinilhamramadhan/chatbot-cakery:sha-0b68093634a025393c0609c8cf41108bfa2ebe7d}
+    image: ${CHATBOT_IMAGE:-ghcr.io/kevinilhamramadhan/chatbot-cakery:latest}
+    pull_policy: always
     restart: "no"
     logging: *logging
     env_file: .env
@@ -281,7 +299,8 @@ services:
         condition: service_healthy
 
   chatbot-service:
-    image: ${CHATBOT_IMAGE:-ghcr.io/kevinilhamramadhan/chatbot-cakery:sha-0b68093634a025393c0609c8cf41108bfa2ebe7d}
+    image: ${CHATBOT_IMAGE:-ghcr.io/kevinilhamramadhan/chatbot-cakery:latest}
+    pull_policy: always
     restart: unless-stopped
     logging: *logging
     # Sengaja TIDAK memakai `env_file: .env`. Dengan mendaftarkan variabelnya di
