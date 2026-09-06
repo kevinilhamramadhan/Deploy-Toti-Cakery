@@ -16,12 +16,15 @@
 #   • sertifikat TLS         -> certbot-init memasang dummy supaya nginx bisa
 #                               start, lalu certbot menukarnya dengan yang asli
 #
-# Yang TETAP manual setelah `up`, karena butuh HP: scan QR WhatsApp.
-#   curl -H "x-api-key: $WWEBJS_API_KEY" http://127.0.0.1:3000/session/start/toti
+# Yang TETAP manual setelah `up`, karena butuh HP: scan QR WhatsApp. Port 3000
+# TIDAK dipublish di sini, jadi curl harus dijalankan dari dalam network:
+#   docker run --rm --network toticakery_default curlimages/curl -s \
+#     -H "x-api-key: $WWEBJS_API_KEY" http://wwebjs-api:3000/session/start/toti
+# Selengkapnya di README, bagian "Menautkan WhatsApp".
 #
 # Wajib ada di .env server: TUNNEL_ID, TUNNEL_CREDENTIALS_JSON,
-# PUBLIC_HOSTNAME, POSTGRES_PASSWORD,
-# SECRET_KEY, SERVICE_API_KEY, INTERNAL_API_KEY, WEBHOOK_TOKEN, WWEBJS_API_KEY.
+# PUBLIC_HOSTNAME, POSTGRES_PASSWORD, SECRET_KEY, SERVICE_API_KEY,
+# INTERNAL_API_KEY, WEBHOOK_TOKEN, WWEBJS_API_KEY, CHATBOT_WA_NUMBER.
 #
 # Yang perlu ada di server: docker-compose.yml, .env, dan folder model/.
 #
@@ -113,6 +116,21 @@ services:
       CHATBOT_INTERNAL_KEY: ${INTERNAL_API_KEY:?INTERNAL_API_KEY wajib diisi di .env}
       MIDTRANS_SERVER_KEY: ${MIDTRANS_SERVER_KEY:-}
       MIDTRANS_IS_PRODUCTION: ${MIDTRANS_IS_PRODUCTION:-false}
+      # Backend mengunci verifikasi WhatsApp ke mode "real" hanya bila
+      # ENVIRONMENT=production. Tanpa baris ini nilainya jatuh ke "development",
+      # dan /auth/verify/wa/start membagikan verify_token tanpa verifikasi apa
+      # pun -- siapa saja bisa mendaftar memakai nomor orang lain.
+      ENVIRONMENT: ${ENVIRONMENT:-production}
+      # Nomor WhatsApp chatbot, dipakai backend menyusun deep link verifikasi.
+      # WAJIB: mode "real" menolak jalan dengan 503 bila nilai ini kosong, jadi
+      # menyetel ENVIRONMENT tanpa menyetel ini mematikan pendaftaran pembeli.
+      CHATBOT_WA_NUMBER: ${CHATBOT_WA_NUMBER:?CHATBOT_WA_NUMBER wajib diisi di .env}
+      # Foto produk diunggah ke Cloudinary, bukan lagi ke volume be_static.
+      # Boleh kosong: backend tetap start, hanya POST /products/{id}/image yang
+      # menolak dengan pesan "Konfigurasi Cloudinary belum lengkap".
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME:-}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY:-}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET:-}
     volumes:
       # Foto produk ditulis ke /app/static/products. Tanpa volume ini semua
       # gambar hilang setiap container dibuat ulang.

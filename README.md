@@ -56,14 +56,43 @@ Tidak ada langkah manual lain sebelum `up`. Yang berjalan otomatis:
 `up` pertama 10–15 menit karena unduhan model; berikutnya beberapa detik.
 Pantau: `docker compose logs -f ollama`
 
-## Satu langkah manual, sesudah `up`
+## Menautkan WhatsApp — satu langkah manual sesudah `up`
 
-Tautkan WhatsApp dengan memindai QR (butuh HP, jadi tidak bisa diotomatiskan):
+Butuh HP, jadi tidak bisa diotomatiskan. QR tidak pernah muncul di `up -d`:
+sesi `toti` baru dibuat setelah diminta, dan QR-nya disajikan lewat API, bukan
+dicetak ke log.
+
+Port 3000 **tidak dipublish** ke host — satu-satunya jalan masuk ke stack ini
+adalah cloudflared. Jadi `curl localhost:3000` tidak akan menjawab; panggil
+dari container sekali-pakai yang ikut network compose:
 
 ```bash
-curl -H "x-api-key: $WWEBJS_API_KEY" http://localhost:3000/session/start/toti
-curl -H "x-api-key: $WWEBJS_API_KEY" http://localhost:3000/session/qr/toti/image -o qr.png
+cd ~/toticakery && set -a && . ./.env && set +a
+
+# 1. mulai sesinya
+docker run --rm --network toticakery_default curlimages/curl -s \
+  -H "x-api-key: $WWEBJS_API_KEY" http://wwebjs-api:3000/session/start/toti
+
+# 2. ambil QR-nya -- siapkan HP dulu, QR kedaluwarsa sekitar semenit
+docker run --rm --network toticakery_default curlimages/curl -s \
+  -H "x-api-key: $WWEBJS_API_KEY" \
+  http://wwebjs-api:3000/session/qr/toti/image > qr.png
 ```
+
+Scan dari WhatsApp → Perangkat tertaut → Tautkan perangkat. Telat? ulangi
+perintah kedua saja; sesinya sudah jalan, yang perlu cuma QR baru.
+
+Hasilnya ditulis lewat redirect, bukan `-v`: image curl berjalan sebagai uid
+100 dan sering gagal menulis ke folder milik pengguna lain.
+
+Verifikasi:
+
+```bash
+docker run --rm --network toticakery_default curlimages/curl -s \
+  -H "x-api-key: $WWEBJS_API_KEY" http://wwebjs-api:3000/session/status/toti
+```
+
+Harus `CONNECTED`, bukan `session_not_found`.
 
 ## Catatan
 
@@ -72,5 +101,12 @@ webhook, dan kredensial tunnel. `.gitignore` di repo ini memakai pola whitelist:
 semua diabaikan kecuali yang disebut eksplisit, supaya berkas rahasia yang baru
 muncul tidak pernah ikut ter-commit tanpa sengaja.
 
-Katalog produk dan FAQ tidak ikut di image database — isi lewat Admin Site
-setelah stack hidup, kalau tidak menu chatbot akan kosong.
+Backend menyemai database sendiri saat start bila tabel `roles` masih kosong:
+role, tiga akun contoh, produk, resep, dan FAQ. Password akun seed itu tetap
+dan tertulis di repo backend — **ganti ketiganya lewat Admin Site begitu login
+pertama**, karena situs ini terbuka di internet.
+
+URL notifikasi yang didaftarkan di dashboard Midtrans harus memakai prefiks
+`/api`, yaitu `https://toticakery.netra.my.id/api/payments/notify`. Hanya jalur
+itu yang diproxy nginx ke backend; tanpa `/api` callback-nya mendarat di SPA
+fallback dan status pembayaran tidak pernah diperbarui.
