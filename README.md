@@ -121,6 +121,12 @@ resep, dan FAQ. Kata sandi ketiga akun tersebut bersifat tetap dan tertulis di
 repositori backend. Karena situs ini dapat diakses dari internet, **gantilah
 ketiga kata sandi tersebut melalui Admin Site segera setelah login pertama**.
 
+Foto produk disimpan di Cloudinary, bukan di server. Ketiga nilai
+`CLOUDINARY_*` di `.env` harus diisi agar Admin Site dapat mengunggah foto.
+Bila dikosongkan, seluruh stack tetap berjalan, hanya unggah foto yang ditolak.
+Karena `image_url` yang tersimpan berupa URL absolut, chatbot meneruskannya apa
+adanya ketika mengirim foto ke pelanggan.
+
 URL notifikasi yang didaftarkan di dashboard Midtrans harus memakai prefiks
 `/api`, yaitu `https://toticakery.web.id/api/payments/notify`. Hanya jalur
 tersebut yang diteruskan nginx ke backend. Tanpa `/api`, callback dari Midtrans
