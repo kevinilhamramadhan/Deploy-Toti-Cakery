@@ -34,10 +34,24 @@
 # TLS diterminasi di edge Cloudflare, jadi tidak ada certbot di sini.
 #
 # Pemetaan hostname ditulis cloudflared-init dari PUBLIC_HOSTNAME di .env:
-#     toticakery.netra.my.id  ->  http://frontend:80
+#     toticakery.web.id  ->  http://frontend:80
 #
 # Membangun dari sumber lokal, bukan menarik dari GHCR:
 #   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+
+# ── Nama project ────────────────────────────────────────────────────────────
+# Tanpa baris ini Compose memakai nama FOLDER sebagai nama project, sehingga
+# container, network, dan volume ikut berganti nama begitu foldernya berbeda:
+# `toticakery-backend-1` di server tapi `capstone-backend-1` di laptop, dan
+# network `toticakery_default` vs `capstone_default`.
+#
+# Efeknya bukan cuma kosmetik. Perintah yang menyebut nama container atau
+# network -- termasuk pemanggilan QR WhatsApp di README -- jadi hanya benar di
+# satu mesin. Dipaku di sini supaya namanya sama di mana pun repo ini berada.
+#
+# Di server nama foldernya memang sudah `toticakery`, jadi baris ini tidak
+# mengubah apa pun di sana: container dan volume yang sudah ada tetap terpakai.
+name: toticakery
 
 # ── Berkas pendukung ────────────────────────────────────────────────────────
 # Konfigurasi model dipisah ke folder model/ supaya mudah dibaca dan disunting
@@ -369,7 +383,7 @@ services:
     environment:
       TUNNEL_ID: ${TUNNEL_ID:?TUNNEL_ID wajib diisi di .env -- lihat .env.server}
       TUNNEL_CREDENTIALS_JSON: ${TUNNEL_CREDENTIALS_JSON:?TUNNEL_CREDENTIALS_JSON wajib diisi di .env}
-      PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME:?PUBLIC_HOSTNAME wajib diisi di .env, mis. toticakery.netra.my.id}
+      PUBLIC_HOSTNAME: ${PUBLIC_HOSTNAME:?PUBLIC_HOSTNAME wajib diisi di .env, mis. toticakery.web.id}
     volumes:
       - cloudflared_conf:/etc/cloudflared
     entrypoint: /bin/sh

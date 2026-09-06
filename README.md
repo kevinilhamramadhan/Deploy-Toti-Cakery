@@ -107,6 +107,6 @@ dan tertulis di repo backend — **ganti ketiganya lewat Admin Site begitu login
 pertama**, karena situs ini terbuka di internet.
 
 URL notifikasi yang didaftarkan di dashboard Midtrans harus memakai prefiks
-`/api`, yaitu `https://toticakery.netra.my.id/api/payments/notify`. Hanya jalur
+`/api`, yaitu `https://toticakery.web.id/api/payments/notify`. Hanya jalur
 itu yang diproxy nginx ke backend; tanpa `/api` callback-nya mendarat di SPA
 fallback dan status pembayaran tidak pernah diperbarui.
