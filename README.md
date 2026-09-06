@@ -8,7 +8,7 @@ Isinya:
 
 | Berkas | Isi |
 |---|---|
-| `docker-compose.yml` | Seluruh stack, 9 service |
+| `docker-compose.yaml` | Seluruh stack, 9 service |
 | `.env.server` | Template konfigurasi. Salin jadi `.env` di server, isi nilainya |
 | `model/ollama-entrypoint.sh` | Skrip yang menyiapkan model AI saat container start |
 | `model/Modelfile.qwen3-1.7b-v5` | Resep model: bobot, template percakapan, parameter |
@@ -31,7 +31,7 @@ Server tanpa akses git? salin manual dari laptop — `-r` wajib karena `model/`
 adalah folder:
 
 ```bash
-scp -r docker-compose.yml .env.server model/ user@server:~/toti/
+scp -r docker-compose.yaml .env.server model/ user@server:~/toti/
 ```
 
 Setelah menyalin, pastikan foldernya ikut terbawa:

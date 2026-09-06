@@ -1,5 +1,5 @@
 # ─────────────────────────────────────────────────────────────────────────────
-# Repo ini SENGAJA hanya memuat dua berkas: docker-compose.yml dan .env.server.
+# Repo ini SENGAJA hanya memuat dua berkas: docker-compose.yaml dan .env.server.
 # Itu saja yang dibutuhkan untuk deploy — compose menarik semua image jadi dari
 # GHCR, dan seluruh berkas pendukung (entrypoint ollama, Modelfile) sudah
 # tertanam di dalam compose sebagai `configs`.
@@ -14,7 +14,7 @@
 *
 
 # 2. Kecuali yang ini
-!docker-compose.yml
+!docker-compose.yaml
 !.env.server
 !.gitignore
 !README.md

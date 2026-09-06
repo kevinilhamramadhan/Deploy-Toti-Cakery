@@ -1,12 +1,12 @@
 # Stack Toti Cakery — SATU file, seluruhnya (9 service).
 #
 #   Server deploy : docker compose up -d
-#   Lokal         : docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+#   Lokal         : docker compose -f docker-compose.yaml -f docker-compose.dev.yaml up -d
 #
 # Perhatikan arahnya: yang butuh `-f` sekarang LOKAL, bukan server. Itu
-# disengaja. Kalau file port-dev bernama docker-compose.override.yml, Compose
+# disengaja. Kalau file port-dev bernama docker-compose.override.yaml, Compose
 # memuatnya OTOMATIS pada `docker compose up` polos — dan di server itu berarti
-# port 8010/8020/8080 terbuka ke internet. Karena itu namanya docker-compose.dev.yml.
+# port 8010/8020/8080 terbuka ke internet. Karena itu namanya docker-compose.dev.yaml.
 #
 # Tidak ada langkah manual sebelum `up`:
 #   • model LLM + embedding  -> disiapkan sendiri oleh skrip entrypoint yang
@@ -26,7 +26,7 @@
 # PUBLIC_HOSTNAME, POSTGRES_PASSWORD, SECRET_KEY, SERVICE_API_KEY,
 # INTERNAL_API_KEY, WEBHOOK_TOKEN, WWEBJS_API_KEY, CHATBOT_WA_NUMBER.
 #
-# Yang perlu ada di server: docker-compose.yml, .env, dan folder model/.
+# Yang perlu ada di server: docker-compose.yaml, .env, dan folder model/.
 #
 # Jalan masuknya lewat Cloudflare Tunnel: mesin ini menyambung KELUAR, jadi
 # tidak butuh IP publik, tidak butuh port forward, dan tembus CGNAT. Tidak ada
@@ -37,7 +37,7 @@
 #     toticakery.web.id  ->  http://frontend:80
 #
 # Membangun dari sumber lokal, bukan menarik dari GHCR:
-#   docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+#   docker compose -f docker-compose.yaml -f docker-compose.build.yaml up -d --build
 
 # ── Nama project ────────────────────────────────────────────────────────────
 # Tanpa baris ini Compose memakai nama FOLDER sebagai nama project, sehingga
@@ -61,7 +61,7 @@ name: toticakery
 #
 # KONSEKUENSI: kedua berkas ini WAJIB ikut disalin ke server. Perintah deploy
 # menjadi:
-#     scp -r docker-compose.yml .env.server model/ user@server:~/toti/
+#     scp -r docker-compose.yaml .env.server model/ user@server:~/toti/
 #
 # Kalau folder model/ tertinggal, `docker compose config` TETAP LOLOS -- ia
 # tidak memeriksa keberadaan berkas. Yang gagal adalah `up`, dengan pesan:
@@ -125,8 +125,8 @@ services:
     # CI ketiga repo menerbitkan tag sha-<commit> berdampingan dengan :latest,
     # jadi versi lama selalu tersedia untuk dipanggil kembali.
     #
-    # Untuk membangun dari sumber lokal: docker compose -f docker-compose.yml \
-    #   -f docker-compose.build.yml up -d --build
+    # Untuk membangun dari sumber lokal: docker compose -f docker-compose.yaml \
+    #   -f docker-compose.build.yaml up -d --build
     image: ${BACKEND_IMAGE:-ghcr.io/nicholl2/backend-cakery:latest}
     pull_policy: always
     restart: unless-stopped
