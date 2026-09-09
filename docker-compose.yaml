@@ -143,6 +143,7 @@ services:
     restart: unless-stopped
     logging: *logging
     environment:
+      ENVIRONMENT: ${ENVIRONMENT:-production}
       WWEBJS_BASE_URL: http://wwebjs-api:3000
       OLLAMA_BASE_URL: http://ollama:11434
       # Menyertakan /api dengan sengaja. Backend berjalan dengan
@@ -175,8 +176,7 @@ services:
       PAYMENT_TIMEOUT_MINUTES: ${PAYMENT_TIMEOUT_MINUTES:-30}
       ALLOW_DOWN_PAYMENT: ${ALLOW_DOWN_PAYMENT:-true}
       DOWN_PAYMENT_PERCENTAGE: ${DOWN_PAYMENT_PERCENTAGE:-0.50}
-      AUTOFILL_PHONE_FROM_WA: ${AUTOFILL_PHONE_FROM_WA:-true}
-      TAKEOVER_EXPIRY_DAYS: ${TAKEOVER_EXPIRY_DAYS:-7}
+      TAKEOVER_EXPIRY_DAYS: ${TAKEOVER_EXPIRY_DAYS:-1}
       WA_VERIFICATION_ENABLED: ${WA_VERIFICATION_ENABLED:-false}
 
       CHROMA_PERSIST_DIR: /app/chroma_db
