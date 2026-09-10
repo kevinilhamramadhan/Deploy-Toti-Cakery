@@ -128,6 +128,13 @@ services:
       CHROMA_PERSIST_DIR: /app/chroma_db
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       INGEST_WAIT_TIMEOUT_SECONDS: ${INGEST_WAIT_TIMEOUT_SECONDS:-1800}
+      # Sumber FAQ adalah CRUD /faq di backend (yang disunting admin lewat Admin
+      # Site); berkas .txt di dalam image cuma cadangan. Tanpa dua baris ini,
+      # ingest memakai alamat backend bawaan yang tidak ada di sini, gagal
+      # diam-diam, lalu meng-embed cadangan itu — dan chatbot menjawab dari FAQ
+      # yang berbeda dengan yang dilihat admin.
+      BACKEND_BASE_URL: http://backend:8000/api
+      BACKEND_SERVICE_API_KEY: ${SERVICE_API_KEY:?SERVICE_API_KEY wajib diisi di .env}
     volumes:
       - chroma_data:/app/chroma_db
     command: ["python", "knowledge_base/ingest.py", "--boot"]
