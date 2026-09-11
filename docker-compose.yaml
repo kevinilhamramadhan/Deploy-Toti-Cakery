@@ -6,6 +6,8 @@ configs:
     file: ./model/Modelfile.qwen3-1.7b-v5
   ollama_modelfile_v6:
     file: ./model/Modelfile.qwen3-1.7b-v6
+  ollama_modelfile_v6b:
+    file: ./model/Modelfile.qwen3-1.7b-v6b
 
 x-logging: &logging
   driver: json-file
@@ -89,6 +91,8 @@ services:
       # kembali ke v5 tidak perlu menyentuh compose lagi.
       - source: ollama_modelfile_v6
         target: /modelfiles/Modelfile.qwen3-1.7b-v6
+      - source: ollama_modelfile_v6b
+        target: /modelfiles/Modelfile.qwen3-1.7b-v6b
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s
