@@ -166,6 +166,106 @@ Healthcheck gateway juga tidak lagi hanya memanggil `/ping`, melainkan
 memeriksa state sesinya, sehingga `docker ps` menyatakan `unhealthy` ketika
 sesinya memang mati.
 
+## Pindah ke server lain
+
+Domainnya **tidak perlu diubah sama sekali**. Cloudflare mengarahkan
+`PUBLIC_HOSTNAME` ke `<TUNNEL_ID>.cfargotunnel.com`, dan yang menentukan
+mesin mana yang menjawab adalah siapa yang sedang menjalankan tunnel dengan
+kredensial itu — bukan alamat IP. Jadi tidak ada DNS record yang disentuh,
+tidak ada propagasi yang ditunggu.
+
+Konsekuensinya satu, dan ini penting: **matikan server lama dulu.** Cloudflare
+mengizinkan satu tunnel dijalankan dari beberapa mesin sekaligus sebagai
+replika, dan kalau dua server sama-sama hidup, permintaan pelanggan dibagi acak
+ke dua stack dengan basis data yang berbeda. Gejalanya membingungkan: pesanan
+kadang ada, kadang hilang.
+
+### 1. Berkas
+
+`.env` dipakai apa adanya — tidak ada satu pun nilai di dalamnya yang terikat
+pada mesin tertentu. `TUNNEL_ID` dan `TUNNEL_CREDENTIALS_JSON` milik tunnel,
+bukan milik server.
+
+```bash
+# di server baru
+git clone https://github.com/kevinilhamramadhan/Deploy-Toti-Cakery.git ~/toticakery
+scp ~/toticakery/.env user@server-baru:~/toticakery/.env   # dari server lama
+ssh user@server-baru 'chmod 600 ~/toticakery/.env'
+```
+
+### 2. Data
+
+Sebagian volume berisi data yang tidak bisa dibuat ulang, sebagian lagi hanya
+unduhan yang akan terisi sendiri.
+
+| Volume | Isi | Perlu dipindah? |
+|---|---|---|
+| `db_data` | Seluruh basis data: pesanan, pelanggan, produk, stok | **Ya** (±64 MB) |
+| `wwebjs_sessions` | Kredensial WhatsApp | **Ya** (±94 MB) — kalau tidak, harus scan QR ulang |
+| `chatbot_data` | State percakapan, keranjang, pesanan tertunda | **Ya** (±140 KB) |
+| `be_static` | Gambar produk yang diunggah | **Ya** (±8 KB) |
+| `chroma_data` | Vektor FAQ | Tidak — dibuat ulang otomatis oleh `chatbot-ingest` |
+| `ollama_models` | Bobot model | Tidak — ditarik ulang dari Hugging Face (±3,7 GB) |
+| `cloudflared_conf` | Konfigurasi tunnel | Tidak — dibuat ulang dari `.env` |
+
+Di server **lama**, hentikan stack lebih dulu agar basis datanya tidak disalin
+dalam keadaan setengah tertulis:
+
+```bash
+cd ~/toticakery && docker compose down
+mkdir -p ~/pindahan && cd ~/pindahan
+for v in db_data wwebjs_sessions chatbot_data be_static; do
+  docker run --rm -v toticakery_$v:/data:ro -v ~/pindahan:/keluar busybox:1.36 \
+    tar czf /keluar/$v.tgz -C /data .
+done
+ls -lh ~/pindahan
+```
+
+Salin ke server baru, lalu pulihkan **sebelum** `up` pertama:
+
+```bash
+scp ~/pindahan/*.tgz user@server-baru:~/pindahan/
+
+# di server baru
+cd ~/toticakery
+for v in db_data wwebjs_sessions chatbot_data be_static; do
+  docker volume create toticakery_$v
+  docker run --rm -v toticakery_$v:/data -v ~/pindahan:/masuk busybox:1.36 \
+    tar xzf /masuk/$v.tgz -C /data
+done
+```
+
+Nama volumenya berawalan `toticakery_` karena `name: toticakery` di baris
+pertama compose. Kalau salah prefiks, compose akan membuat volume kosong baru
+dan stack-nya hidup tanpa data — tanpa error apa pun.
+
+### 3. Jalankan
+
+```bash
+cd ~/toticakery
+./preflight.sh          # wajib: server baru, jaringan baru
+docker compose up -d
+docker compose logs -f ollama      # unduhan model, 10-15 menit
+```
+
+### 4. Periksa
+
+```bash
+# sesi WhatsApp ikut pindah?
+docker compose exec chatbot-service python -c \
+  "import asyncio; from app.whatsapp_client.client import whatsapp_client; \
+   print(asyncio.run(whatsapp_client.session_state()))"
+```
+
+Hasilnya harus `CONNECTED`. Kalau `session_not_found`, tunggu satu siklus
+(30 detik) — chatbot menyalakannya sendiri. Kalau setelah beberapa menit tetap
+tidak tersambung, kredensialnya tidak terbawa dan perlu scan QR ulang mengikuti
+bagian **Menautkan WhatsApp** di atas.
+
+Terakhir, buka `https://PUBLIC_HOSTNAME` di browser. Kalau halamannya terbuka
+dan menunya terisi, seluruh rantainya — tunnel, frontend, backend, basis data —
+sudah pindah.
+
 ## Catatan
 
 Berkas `.env` **tidak** ikut disimpan ke repositori karena memuat kata sandi
