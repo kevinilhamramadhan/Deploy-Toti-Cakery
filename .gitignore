@@ -18,6 +18,7 @@
 !.env.server
 !.gitignore
 !README.md
+!preflight.sh
 
 # Konfigurasi model. Folder-nya harus diizinkan lebih dulu, baru isinya --
 # begitulah cara pola whitelist bekerja pada direktori: kalau folder induknya

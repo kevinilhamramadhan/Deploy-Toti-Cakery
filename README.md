@@ -11,6 +11,7 @@ Isi repositori:
 |---|---|
 | `docker-compose.yaml` | Seluruh stack, terdiri atas 9 service |
 | `.env.server` | Template konfigurasi. Salin menjadi `.env` di server, lalu isi nilainya |
+| `preflight.sh` | Pemeriksaan server dan jaringan sebelum `up` |
 | `model/ollama-entrypoint.sh` | Skrip yang menyiapkan model AI ketika container dijalankan |
 | `model/Modelfile.qwen3-1.7b-v5` | Resep model: bobot, template percakapan, dan parameter |
 
@@ -26,8 +27,45 @@ git clone https://github.com/kevinilhamramadhan/Deploy-Toti-Cakery.git ~/toticak
 cd ~/toticakery
 cp .env.server .env && chmod 600 .env
 nano .env                 # isi 10 nilai wajib, lihat komentar di dalamnya
+./preflight.sh            # periksa server dan jaringannya dulu
 docker compose up -d
 ```
+
+### Mengapa `preflight.sh` ada
+
+`docker compose config` melaporkan "valid" untuk stack yang tidak akan pernah
+jalan. Ia tidak membaca isi `.env`, tidak memeriksa folder `model/`, dan tidak
+tahu apa-apa soal jaringan server. Semua yang diperiksa `preflight.sh` pernah
+benar-benar menggagalkan deploy:
+
+| Yang diperiksa | Gejalanya kalau dilewatkan |
+|---|---|
+| Folder `model/` lengkap | `up` gagal: `bind source path does not exist` |
+| 10 nilai wajib di `.env` terisi | container berhenti saat start, pesannya terkubur di log |
+| DNS host bisa resolve `ghcr.io` | semua pull image gagal |
+| DNS container bisa resolve `web.whatsapp.com` | sesi WhatsApp tidak pernah tersambung |
+| `resolv.conf` punya nameserver IPv4 | `docker pull` gagal: `cannot assign requested address` |
+| RAM dan disk | Ollama kena OOM, atau bobot model gagal diunduh |
+| Bisa menghubungi GHCR, Hugging Face, WhatsApp, Cloudflare | satu bagian mati diam-diam |
+
+Keluar dengan status 1 kalau ada yang **GAGAL**; **AWAS** tidak menggagalkan.
+
+### Kalau `docker pull` gagal padahal internet jalan
+
+Penyebab yang paling sering: `/etc/resolv.conf` hanya berisi nameserver IPv6
+sementara server tidak punya rute IPv6, atau satu baris `nameserver` diisi dua
+alamat sekaligus — hanya alamat pertama yang dipakai. `preflight.sh` menandai
+keduanya. Kalau resolver hostnya memang tidak bisa diperbaiki, daemon Docker
+bisa diberi resolver sendiri:
+
+```bash
+sudo tee /etc/docker/daemon.json >/dev/null <<'EOF'
+{ "dns": ["1.1.1.1", "8.8.8.8"] }
+EOF
+sudo systemctl restart docker
+```
+
+Ini menyetel DNS untuk daemon dan container, tanpa menyentuh resolver host.
 
 Jika server tidak memiliki akses git, salin berkasnya secara manual dari
 laptop. Opsi `-r` wajib disertakan karena `model/` merupakan folder:
@@ -106,6 +144,27 @@ docker run --rm --network toticakery_default curlimages/curl -s \
 ```
 
 Hasilnya harus `CONNECTED`, bukan `session_not_found`.
+
+### Sesi yang mati akan pulih sendiri
+
+Penautan di atas hanya perlu dilakukan **sekali**. Kredensialnya disimpan di
+volume `wwebjs_sessions` dan dipakai lagi setiap container start.
+
+Yang dulu menjadi masalah: gateway menginisialisasi sesinya sekali saja saat
+start. Kalau saat itu jaringan belum siap — persis yang terjadi setiap server
+baru boot — Puppeteer gagal membuka `web.whatsapp.com`, sesinya batal, dan
+tidak pernah dicoba lagi walau jaringannya hidup beberapa detik kemudian.
+Gateway tetap menjawab `/ping` dengan 200, sehingga `docker ps` menulis
+`healthy` untuk gateway yang nol pesannya masuk.
+
+Sekarang chatbot memeriksa state sesi pada setiap siklus latar belakang dan
+menyalakannya lagi kalau mati, dengan jeda dua menit agar inisialisasi yang
+sedang berjalan tidak dibatalkan. Tidak ada lagi `docker compose restart
+wwebjs-api` manual setelah reboot.
+
+Healthcheck gateway juga tidak lagi hanya memanggil `/ping`, melainkan
+memeriksa state sesinya, sehingga `docker ps` menyatakan `unhealthy` ketika
+sesinya memang mati.
 
 ## Catatan
 

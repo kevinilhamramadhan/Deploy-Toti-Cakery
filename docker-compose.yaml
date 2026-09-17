@@ -109,15 +109,28 @@ services:
       ENABLE_WEBHOOK: "true"
       BASE_WEBHOOK_URL: http://chatbot-service:8000/webhook/whatsapp/${WEBHOOK_TOKEN:?WEBHOOK_TOKEN wajib diisi di .env}
       API_KEY: ${WWEBJS_API_KEY:?WWEBJS_API_KEY wajib diisi di .env}
+      # Dibaca healthcheck di bawah. Harus sama dengan WWEBJS_SESSION_ID yang
+      # dipakai chatbot-service, kalau tidak healthcheck memeriksa sesi lain.
+      SESSION_ID: ${WWEBJS_SESSION_ID:-toti}
       DISABLED_CALLBACKS: "message_create|message_revoke_everyone|message_reaction|media|group_join|group_leave|call"
     volumes:
       - wwebjs_sessions:/usr/src/app/sessions
+    # Healthcheck memeriksa SESI-nya, bukan cuma /ping. Gateway menjawab /ping
+    # dengan 200 selama proses Node-nya hidup — termasuk saat sesi WhatsApp-nya
+    # gagal diinisialisasi dan nol pesan bisa masuk. Selama healthcheck-nya cuma
+    # /ping, `docker ps` menulis "healthy" untuk gateway yang sebenarnya mati.
+    #
+    # Ini penanda, bukan obat: compose tidak me-restart container yang unhealthy.
+    # Yang menyembuhkan adalah chatbot-service, yang memeriksa sesi tiap siklus
+    # dan menyalakannya lagi kalau mati (app/conversation/background.py).
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/ping',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
-      interval: 30s
-      timeout: 10s
+      test: ["CMD-SHELL", "node -e \"const k=process.env.API_KEY,s=process.env.SESSION_ID||'toti';require('http').get({host:'127.0.0.1',port:3000,path:'/session/status/'+s,headers:{'x-api-key':k}},r=>{let b='';r.on('data',c=>b+=c);r.on('end',()=>process.exit(/\\\"state\\\":\\\"CONNECTED\\\"/.test(b)?0:1))}).on('error',()=>process.exit(1))\""]
+      interval: 60s
+      timeout: 15s
       retries: 3
-      start_period: 30s
+      # Sesi butuh waktu membuka Chromium dan memulihkan kredensialnya; selama
+      # start_period kegagalan tidak dihitung sebagai unhealthy.
+      start_period: 180s
     shm_size: 512m
 
   # ── Chatbot ───────────────────────────────────────────────────────────────
