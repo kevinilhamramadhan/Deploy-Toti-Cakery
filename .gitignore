@@ -28,6 +28,7 @@
 !model/Modelfile.qwen3-1.7b-v5
 !model/Modelfile.qwen3-1.7b-v6
 !model/Modelfile.qwen3-1.7b-v6b
+!model/Modelfile.qwen3-1.7b-v7
 
 # .env TIDAK ada di daftar putih, dan itu memang tujuannya: isinya password DB,
 # SECRET_KEY, token webhook, dan TUNNEL_CREDENTIALS_JSON. Yang di-commit adalah
