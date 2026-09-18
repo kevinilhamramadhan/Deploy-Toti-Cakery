@@ -207,9 +207,6 @@ services:
       FAQ_REFRESH_SECONDS: ${FAQ_REFRESH_SECONDS:-900}
       LLM_NUM_CTX: ${LLM_NUM_CTX:-8192}
       LLM_NUM_PREDICT: ${LLM_NUM_PREDICT:-192}
-      # Batas waktu satu balasan (detik). Lewat batas, generasi model dibatalkan
-      # dan pelanggan menerima kalimat tetap — target Kevin: balasan < 60 detik.
-      BATAS_BALAS_DETIK: ${BATAS_BALAS_DETIK:-50}
       OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:--1}
       WARMUP_ON_STARTUP: ${WARMUP_ON_STARTUP:-true}
       RAG_SIMILARITY_THRESHOLD: ${RAG_SIMILARITY_THRESHOLD:-0.40}
