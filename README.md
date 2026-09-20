@@ -166,6 +166,85 @@ Healthcheck gateway juga tidak lagi hanya memanggil `/ping`, melainkan
 memeriksa state sesinya, sehingga `docker ps` menyatakan `unhealthy` ketika
 sesinya memang mati.
 
+## Kalau servernya komputer desktop
+
+Stack ini juga jalan di PC biasa, misalnya komputer lab, tapi desktop punya dua
+kebiasaan yang tidak dimiliki VPS dan keduanya mematikan situs tanpa pesan apa
+pun:
+
+```bash
+sudo systemctl enable --now docker      # tanpa ini, stack tidak hidup lagi setelah listrik mati
+sudo usermod -aG docker $USER           # logout-login setelah ini
+sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target
+```
+
+Baris ketiga yang paling sering terlewat. Begitu mesinnya suspend, cloudflared
+ikut mati dan `PUBLIC_HOSTNAME` berhenti menjawab, padahal `restart:
+unless-stopped` tidak menolong: containernya tidak crash, mesinnya yang tidur.
+
+Sebelum meninggalkan mesinnya, `sudo reboot` sekali lalu pastikan
+`docker compose ps` kembali sehat dan situsnya terbuka. Menguji ini selagi
+masih bisa menyentuh komputernya jauh lebih murah daripada menemukannya rusak
+dari jarak jauh.
+
+## Akses jarak jauh
+
+Komputer lab atau kantor umumnya ada di balik NAT, tanpa IP publik dan tanpa
+port forward. Tailscale menyelesaikannya tanpa membuka apa pun ke internet,
+sama seperti alasan stack ini memakai cloudflared:
+
+```bash
+curl -fsSL https://tailscale.com/install.sh | sh
+sudo tailscale up --ssh --hostname=lab-toti
+sudo tailscale set --auto-update
+```
+
+Opsi `--ssh` membuat autentikasi SSH memakai identitas tailnet, jadi tidak ada
+kunci yang perlu disalin atau dirotasi. Dari laptop cukup `ssh user@lab-toti`.
+
+Dua hal wajib diselesaikan **selagi masih di depan mesinnya**, karena keduanya
+tidak bisa diperbaiki dari jauh:
+
+| Langkah | Kalau dilewatkan |
+|---|---|
+| Admin console → Machines → mesin ini → **Disable key expiry** | kunci kedaluwarsa dalam 180 hari; mesinnya hilang dari tailnet dan hanya bisa dipulihkan dengan datang lagi |
+| `tailscale status` dari laptop, diuji di tempat | kalau jaringan memblok UDP, koneksinya jatuh ke relay DERP — tetap jalan, tapi lambat, dan lebih baik ketahuan sekarang |
+
+## Pembaruan otomatis
+
+CI di ketiga repo kode sudah mendorong image ke GHCR pada setiap push ke `main`,
+lengkap dengan tag `:latest` dan `:sha-<commit>`. Yang dikerjakan repo ini
+adalah paruh keduanya: menariknya turun. Service `watchtower` di compose
+memeriksa GHCR tiap lima menit dan merekreasi container yang image-nya berubah.
+
+Tidak ada langkah tambahan. Watchtower ikut naik pada `docker compose up -d`
+biasa, tidak lewat overlay, justru supaya tidak bisa terlewat: overlay membuat
+setiap `up` polos berikutnya diam-diam membuang labelnya dan CD berhenti tanpa
+error.
+
+Yang diperbarui **hanya chatbot-service**, karena hanya itu yang berlabel
+`com.centurylinklabs.watchtower.enable=true` dan watchtower dijalankan dengan
+`--label-enable`. Ini disengaja: `backend` dan `frontend` berasal dari repo
+milik orang lain, dan tanpa batasan tersebut setiap merge mereka langsung
+mendarat di produksi tanpa sepengetahuan siapa pun di sini. Keduanya diperbarui
+dengan sadar:
+
+```bash
+docker compose pull backend frontend && docker compose up -d
+```
+
+Untuk rollback, sematkan tag tetap di `.env` lalu `up -d`. Selama `CHATBOT_IMAGE`
+tidak menunjuk `:latest`, watchtower tidak punya yang bisa diperbarui:
+
+```bash
+CHATBOT_IMAGE=ghcr.io/kevinilhamramadhan/chatbot-cakery:sha-<commit>
+```
+
+Kalau paket GHCR-nya private, watchtower butuh kredensial: `docker login
+ghcr.io` dengan PAT ber-scope `read:packages`, lalu tambahkan berkas hasilnya
+sebagai volume pada service `watchtower`, yaitu
+`${HOME}/.docker/config.json:/config.json:ro`.
+
 ## Pindah ke server lain
 
 Domainnya **tidak perlu diubah sama sekali**. Cloudflare mengarahkan

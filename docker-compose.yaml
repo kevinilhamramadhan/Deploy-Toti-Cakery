@@ -177,6 +177,10 @@ services:
     pull_policy: always
     restart: unless-stopped
     logging: *logging
+    labels:
+      # Satu-satunya service yang boleh diperbarui otomatis oleh watchtower.
+      # Lihat blok watchtower di bawah untuk alasannya.
+      com.centurylinklabs.watchtower.enable: "true"
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-production}
       WWEBJS_BASE_URL: http://wwebjs-api:3000
@@ -283,6 +287,39 @@ services:
         condition: service_completed_successfully
       frontend:
         condition: service_started
+
+  # ── Pembaruan otomatis (CD) ───────────────────────────────────────────────
+  # Paruh kedua dari CI di repo chatbot: CI mendorong image baru ke GHCR
+  # sebagai :latest, watchtower yang menariknya ke sini. Berbasis polling, jadi
+  # tidak ada port masuk yang dibuka dan tidak ada kunci SSH yang dititipkan ke
+  # GitHub -- sejalan dengan alasan stack ini memakai cloudflared.
+  #
+  # --label-enable adalah inti keamanannya: HANYA container berlabel
+  # com.centurylinklabs.watchtower.enable=true yang diperbarui, dan itu cuma
+  # chatbot-service. Yang lain sengaja dibiarkan manual:
+  #
+  #   backend, frontend  -> image milik repo orang lain. Tanpa batasan ini,
+  #                         setiap merge mereka langsung mendarat di produksi
+  #                         tanpa kamu tahu. Perbaruinya dengan sadar:
+  #                           docker compose pull backend frontend
+  #                           docker compose up -d
+  #   postgres, ollama,  -> :latest mereka bisa berubah major. Khusus ollama,
+  #   wwebjs-api            container baru berarti tidak ada yang berubah di
+  #                         volume, tapi image-nya sendiri ±2 GB.
+  #
+  # chatbot-ingest tidak ikut terpicu (restart: "no"). Kalau berkas FAQ berubah,
+  # jalankan sendiri: docker compose up -d chatbot-ingest
+  #
+  # Image chatbot yang private butuh kredensial: `docker login ghcr.io` dengan
+  # PAT scope read:packages, lalu tambahkan berkas hasilnya sebagai volume:
+  #   - ${HOME}/.docker/config.json:/config.json:ro
+  watchtower:
+    image: containrrr/watchtower:latest
+    restart: unless-stopped
+    logging: *logging
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: ["--label-enable", "--cleanup", "--interval", "300"]
 
 volumes:
   db_data:        
