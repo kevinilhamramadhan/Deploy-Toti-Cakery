@@ -325,6 +325,12 @@ services:
     image: containrrr/watchtower:latest
     restart: unless-stopped
     logging: *logging
+    environment:
+      # containrrr/watchtower:latest masih memakai Docker API 1.25, sedangkan
+      # daemon di VM menolak apa pun di bawah 1.40 ("client version 1.25 is too
+      # old") dan container-nya restart-loop tanpa pernah memeriksa satu image
+      # pun. Versi dipaksa lewat env, bukan dengan menurunkan minimum daemon.
+      DOCKER_API_VERSION: "1.44"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     command: ["--label-enable", "--cleanup", "--interval", "300"]
