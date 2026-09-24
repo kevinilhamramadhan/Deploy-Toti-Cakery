@@ -10,6 +10,8 @@ configs:
     file: ./model/Modelfile.qwen3-1.7b-v6b
   ollama_modelfile_v7:
     file: ./model/Modelfile.qwen3-1.7b-v7
+  ollama_modelfile_v8:
+    file: ./model/Modelfile.qwen3-1.7b-v8
 
 x-logging: &logging
   driver: json-file
@@ -97,6 +99,8 @@ services:
         target: /modelfiles/Modelfile.qwen3-1.7b-v6b
       - source: ollama_modelfile_v7
         target: /modelfiles/Modelfile.qwen3-1.7b-v7
+      - source: ollama_modelfile_v8
+        target: /modelfiles/Modelfile.qwen3-1.7b-v8
     healthcheck:
       test: ["CMD", "ollama", "list"]
       interval: 30s
