@@ -105,10 +105,40 @@ services:
       start_period: 900s
 
   # ── Gateway WhatsApp ──────────────────────────────────────────────────────
+  # Penjaga pintu: wwebjs-api membuka Chromium ke web.whatsapp.com BEGITU
+  # prosesnya hidup. Sesudah VM di-boot, DNS-nya sering belum siap saat itu, dan
+  # Chromium gagal dengan net::ERR_NAME_NOT_RESOLVED. Sesi baru pulih setelah
+  # beberapa siklus ulang -- terukur 24 Sep 2026: ±15 menit tanpa satu pun pesan
+  # WhatsApp bisa masuk, sementara `docker ps` tetap menulis "healthy" karena
+  # start_period healthcheck-nya belum habis.
+  wwebjs-dns-wait:
+    image: alpine:3
+    restart: "no"
+    logging: *logging
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -eu
+        i=0
+        until getent hosts web.whatsapp.com >/dev/null 2>&1; do
+          i=$$((i + 1))
+          if [ "$$i" -ge 60 ]; then
+            echo "[dns] web.whatsapp.com tidak juga resolve sesudah 60 detik --"
+            echo "[dns] gateway tetap dijalankan; sesi akan mencoba sendiri."
+            exit 0
+          fi
+          sleep 1
+        done
+        echo "[dns] web.whatsapp.com siap sesudah $$i detik"
+
   wwebjs-api:
     image: avoylenko/wwebjs-api:latest
     restart: unless-stopped
     logging: *logging
+    depends_on:
+      wwebjs-dns-wait:
+        condition: service_completed_successfully
     environment:
       ENABLE_WEBHOOK: "true"
       BASE_WEBHOOK_URL: http://chatbot-service:8000/webhook/whatsapp/${WEBHOOK_TOKEN:?WEBHOOK_TOKEN wajib diisi di .env}
