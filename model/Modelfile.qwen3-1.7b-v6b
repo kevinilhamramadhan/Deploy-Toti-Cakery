@@ -72,9 +72,11 @@ For each function call, return a json object with function name and arguments wi
 PARAMETER repeat_penalty 1
 PARAMETER stop "<|im_start|>"
 PARAMETER stop "<|im_end|>"
-PARAMETER temperature 0.6
+# temperature & top_p TIDAK ditaruh di sini: chatbot-service mengirimnya di
+# setiap panggilan (app/llm/client.py), jadi nilai di Modelfile selalu kalah
+# dan hanya menyesatkan. Setel lewat LLM_TEMPERATURE / LLM_TOP_P di .env.
+# top_k & repeat_penalty di bawah TIDAK dikirim per panggilan -> berlaku.
 PARAMETER top_k 20
-PARAMETER top_p 0.95
 # 2 thread, bukan semua inti. VM punya 4 vCPU dan gateway WhatsApp (Chromium)
 # terus memakai sebagian CPU. Terukur 19 Sep 2026: dengan 4 thread, satu inti
 # yang sibuk membuat generasi anjlok dari ~9 ke 0,3 token/detik (balasan 85-229

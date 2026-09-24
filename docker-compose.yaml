@@ -211,6 +211,14 @@ services:
       FAQ_REFRESH_SECONDS: ${FAQ_REFRESH_SECONDS:-900}
       LLM_NUM_CTX: ${LLM_NUM_CTX:-8192}
       LLM_NUM_PREDICT: ${LLM_NUM_PREDICT:-192}
+      # Parameter sampling yang BERLAKU, satu-satunya tempat menyetelnya.
+      # chatbot-service mengirim temperature/top_p/num_ctx/num_predict di setiap
+      # panggilan (app/llm/client.py), jadi nilai yang sama di Modelfile selalu
+      # kalah dan sudah dibuang dari sana. 0,3 bukan 0,7: pada 0,7 model 1,7B
+      # Q4 ini menjawab sapaan Indonesia dengan bahasa Inggris (2 dari 12) dan
+      # sesekali mengarang kata ("Sejahtor"); pada 0,3 12 dari 12 wajar.
+      LLM_TEMPERATURE: ${LLM_TEMPERATURE:-0.3}
+      LLM_TOP_P: ${LLM_TOP_P:-0.8}
       OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:--1}
       WARMUP_ON_STARTUP: ${WARMUP_ON_STARTUP:-true}
       RAG_SIMILARITY_THRESHOLD: ${RAG_SIMILARITY_THRESHOLD:-0.40}
