@@ -64,8 +64,9 @@ else
 fi
 
 # model/ dirujuk sebagai `configs.file`, yang TIDAK diperiksa oleh `config`.
-for berkas in model/ollama-entrypoint.sh model/Modelfile.qwen3-1.7b-v5 \
-  model/Modelfile.qwen3-1.7b-v6 model/Modelfile.qwen3-1.7b-v6b; do
+# Daftarnya dibaca dari compose, bukan ditulis ulang di sini: daftar tulisan
+# tangan tertinggal setiap kali Modelfile versi baru ditambahkan.
+for berkas in $(sed -nE 's|^[[:space:]]+file:[[:space:]]+\./||p' docker-compose.yaml); do
   [ -f "$berkas" ] && hijau "$berkas" || merah "$berkas tidak ada (folder model/ tertinggal saat menyalin?)"
 done
 
