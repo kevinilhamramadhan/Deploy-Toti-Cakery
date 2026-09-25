@@ -86,9 +86,9 @@ services:
     logging: *logging
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
     environment:
-      LLM_MODEL: ${LLM_MODEL:-toti-qwen-1.7b-v5}
+      LLM_MODEL: ${LLM_MODEL:-toti-qwen-1.7b-v9}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embedding:0.6b}
-      LLM_HF_REF: ${LLM_HF_REF:-hf.co/LasagnaS/toti-qwen-1.7b-v5-gguf:Q4_K_M}
+      LLM_HF_REF: ${LLM_HF_REF:-hf.co/LasagnaS/toti-qwen-1.7b-v9-gguf:Q4_K_M}
       OLLAMA_KEEP_ALIVE: "-1"
     volumes:
       - ollama_models:/root/.ollama
@@ -245,7 +245,7 @@ services:
       # email sama sekali, bukan menyebut alamat karangan.
       STORE_SUPPORT_EMAIL: ${STORE_SUPPORT_EMAIL:-}
 
-      LLM_MODEL: ${LLM_MODEL:-toti-qwen-1.7b-v5}
+      LLM_MODEL: ${LLM_MODEL:-toti-qwen-1.7b-v9}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-qwen3-embedding:0.6b}
 
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
@@ -376,6 +376,18 @@ services:
       # Autentikasi UI wajib: WUD menolak start tanpa akun admin.
       WUD_AUTH_ADMIN_USER: admin
       WUD_AUTH_ADMIN_PASSWORD: ${WUD_ADMIN_PASSWORD:?WUD_ADMIN_PASSWORD wajib diisi di .env}
+      # Email tiap kali versi baru terdeteksi (dan langsung dipasang). Opsional.
+      # Tanpa nilai, variabel diteruskan apa adanya dari .env -- sengaja, karena
+      # repo ini publik dan alamat email tidak boleh ikut ter-commit. Kalau
+      # baris-baris ini tidak ada di .env, trigger email tidak terdaftar sama
+      # sekali dan WUD tetap jalan. Contoh isinya di .env.server.
+      WUD_TRIGGER_SMTP_EMAIL_HOST:
+      WUD_TRIGGER_SMTP_EMAIL_PORT:
+      WUD_TRIGGER_SMTP_EMAIL_TLS_ENABLED:
+      WUD_TRIGGER_SMTP_EMAIL_USER:
+      WUD_TRIGGER_SMTP_EMAIL_PASS:
+      WUD_TRIGGER_SMTP_EMAIL_FROM_ADDRESS:
+      WUD_TRIGGER_SMTP_EMAIL_TO:
     ports:
       - "127.0.0.1:3001:3000"
     volumes:
