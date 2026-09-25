@@ -254,6 +254,18 @@ paketnya dijadikan private, tambahkan `WUD_REGISTRY_GHCR_PRIVATE_USERNAME` dan
 `WUD_REGISTRY_GHCR_PRIVATE_TOKEN` (PAT ber-scope `read:packages`) pada service
 `wud`.
 
+## Mengulang percakapan satu nomor
+
+Untuk uji langsung atau demo, nomor WhatsApp yang sudah pernah chat bisa dibuat
+kembali seperti pelanggan baru: sesi, keranjang, bahasa, dan riwayat
+percakapannya dihapus dari chatbot. Pesanan yang masih menunggu bayar ikut
+dibatalkan di backend; pesanan lunas dan akun pembeli tidak disentuh.
+
+```bash
+./reset-percakapan.sh 0812xxxxxxxx      # tampilkan isinya, lalu minta konfirmasi
+./reset-percakapan.sh 0812xxxxxxxx -y   # langsung hapus
+```
+
 ## Pindah ke server lain
 
 Domainnya **tidak perlu diubah sama sekali**. Cloudflare mengarahkan

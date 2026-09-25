@@ -19,6 +19,7 @@
 !.gitignore
 !README.md
 !preflight.sh
+!reset-percakapan.sh
 
 # Konfigurasi model. Folder-nya harus diizinkan lebih dulu, baru isinya --
 # begitulah cara pola whitelist bekerja pada direktori: kalau folder induknya
