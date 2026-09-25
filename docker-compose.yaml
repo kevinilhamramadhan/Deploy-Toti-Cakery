@@ -43,6 +43,9 @@ services:
   backend:
     image: ${BACKEND_IMAGE:-ghcr.io/nicholl2/backend-cakery:latest}
     pull_policy: always
+    labels:
+      # Diperbarui otomatis oleh WUD -- lihat blok wud di bawah.
+      wud.watch: "true"
     restart: unless-stopped
     logging: *logging
     environment:
@@ -68,6 +71,9 @@ services:
   frontend:
     image: ${FRONTEND_IMAGE:-ghcr.io/azpdschool/toti-cakery-fe:latest}
     pull_policy: always
+    labels:
+      # Diperbarui otomatis oleh WUD -- lihat blok wud di bawah.
+      wud.watch: "true"
     restart: unless-stopped
     logging: *logging
     depends_on:
@@ -215,9 +221,8 @@ services:
     restart: unless-stopped
     logging: *logging
     labels:
-      # Satu-satunya service yang boleh diperbarui otomatis oleh watchtower.
-      # Lihat blok watchtower di bawah untuk alasannya.
-      com.centurylinklabs.watchtower.enable: "true"
+      # Diperbarui otomatis oleh WUD -- lihat blok wud di bawah.
+      wud.watch: "true"
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-production}
       WWEBJS_BASE_URL: http://wwebjs-api:3000
@@ -334,43 +339,48 @@ services:
         condition: service_started
 
   # ── Pembaruan otomatis (CD) ───────────────────────────────────────────────
-  # Paruh kedua dari CI di repo chatbot: CI mendorong image baru ke GHCR
-  # sebagai :latest, watchtower yang menariknya ke sini. Berbasis polling, jadi
-  # tidak ada port masuk yang dibuka dan tidak ada kunci SSH yang dititipkan ke
-  # GitHub -- sejalan dengan alasan stack ini memakai cloudflared.
+  # Paruh kedua dari CI di ketiga repo kode: CI mendorong image baru ke GHCR
+  # sebagai :latest, WUD (What's Up Docker) yang menariknya ke sini. WUD memantau
+  # digest :latest di GHCR tiap lima menit; begitu berubah, trigger docker
+  # menarik image baru dan merekreasi container-nya dengan konfigurasi yang sama.
+  # Berbasis polling, jadi tidak ada port masuk dan tidak ada secret di GitHub.
   #
-  # --label-enable adalah inti keamanannya: HANYA container berlabel
-  # com.centurylinklabs.watchtower.enable=true yang diperbarui, dan itu cuma
-  # chatbot-service. Yang lain sengaja dibiarkan manual:
+  # WATCHBYDEFAULT=false adalah inti keamanannya: HANYA container berlabel
+  # wud.watch=true yang diperbarui, yaitu backend, frontend, dan
+  # chatbot-service. Artinya setiap merge ke main di repo mana pun dari ketiganya
+  # sampai ke produksi dalam lima menit. Yang lain sengaja dibiarkan manual:
   #
-  #   backend, frontend  -> image milik repo orang lain. Tanpa batasan ini,
-  #                         setiap merge mereka langsung mendarat di produksi
-  #                         tanpa kamu tahu. Perbaruinya dengan sadar:
-  #                           docker compose pull backend frontend
-  #                           docker compose up -d
   #   postgres, ollama,  -> :latest mereka bisa berubah major. Khusus ollama,
-  #   wwebjs-api            container baru berarti tidak ada yang berubah di
-  #                         volume, tapi image-nya sendiri ±2 GB.
+  #   wwebjs-api            image-nya sendiri ±2 GB.
   #
-  # chatbot-ingest tidak ikut terpicu (restart: "no"). Kalau berkas FAQ berubah,
+  # chatbot-ingest tidak diberi label (restart: "no"). Kalau berkas FAQ berubah,
   # jalankan sendiri: docker compose up -d chatbot-ingest
   #
-  # Image chatbot yang private butuh kredensial: `docker login ghcr.io` dengan
-  # PAT scope read:packages, lalu tambahkan berkas hasilnya sebagai volume:
-  #   - ${HOME}/.docker/config.json:/config.json:ro
-  watchtower:
-    image: containrrr/watchtower:latest
+  # Trigger docker, bukan dockercompose: dockercompose hanya menambahkan langkah
+  # menulis ulang tag di berkas compose, yang tidak berguna untuk :latest, dan
+  # mencocokkan service lewat string image -- sedangkan image di sini berbentuk
+  # ${BACKEND_IMAGE:-...}. Container hasil rekreasi tetap membawa label compose,
+  # jadi `docker compose ps` dan `up -d` berikutnya masih mengenalinya.
+  #
+  # Web UI-nya hanya di loopback dan TIDAK dirutekan lewat cloudflared: WUD
+  # memegang docker.sock, jadi akses ke UI-nya setara akses root ke mesin ini.
+  # Buka dari laptop lewat SSH tunnel:  ssh -L 3001:127.0.0.1:3001 <vm>
+  wud:
+    image: getwud/wud:9
     restart: unless-stopped
     logging: *logging
     environment:
-      # containrrr/watchtower:latest masih memakai Docker API 1.25, sedangkan
-      # daemon di VM menolak apa pun di bawah 1.40 ("client version 1.25 is too
-      # old") dan container-nya restart-loop tanpa pernah memeriksa satu image
-      # pun. Versi dipaksa lewat env, bukan dengan menurunkan minimum daemon.
-      DOCKER_API_VERSION: "1.44"
+      WUD_WATCHER_LOCAL_WATCHBYDEFAULT: "false"
+      WUD_WATCHER_LOCAL_CRON: "*/5 * * * *"
+      WUD_TRIGGER_DOCKER_LOCAL_PRUNE: "true"
+      # Autentikasi UI wajib: WUD menolak start tanpa akun admin.
+      WUD_AUTH_ADMIN_USER: admin
+      WUD_AUTH_ADMIN_PASSWORD: ${WUD_ADMIN_PASSWORD:?WUD_ADMIN_PASSWORD wajib diisi di .env}
+    ports:
+      - "127.0.0.1:3001:3000"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-    command: ["--label-enable", "--cleanup", "--interval", "300"]
+      - wud_store:/store
 
 volumes:
   db_data:        
@@ -380,3 +390,4 @@ volumes:
   wwebjs_sessions:  
   chroma_data:      
   cloudflared_conf: 
+  wud_store:

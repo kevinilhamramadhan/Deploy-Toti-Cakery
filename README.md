@@ -214,36 +214,45 @@ tidak bisa diperbaiki dari jauh:
 
 CI di ketiga repo kode sudah mendorong image ke GHCR pada setiap push ke `main`,
 lengkap dengan tag `:latest` dan `:sha-<commit>`. Yang dikerjakan repo ini
-adalah paruh keduanya: menariknya turun. Service `watchtower` di compose
-memeriksa GHCR tiap lima menit dan merekreasi container yang image-nya berubah.
+adalah paruh keduanya: menariknya turun. Service `wud`
+([What's Up Docker](https://github.com/getwud/wud)) memeriksa digest `:latest`
+di GHCR tiap lima menit dan merekreasi container yang image-nya berubah.
 
-Tidak ada langkah tambahan. Watchtower ikut naik pada `docker compose up -d`
-biasa, tidak lewat overlay, justru supaya tidak bisa terlewat: overlay membuat
-setiap `up` polos berikutnya diam-diam membuang labelnya dan CD berhenti tanpa
-error.
+Tidak ada langkah tambahan selain mengisi `WUD_ADMIN_PASSWORD` di `.env`. WUD
+ikut naik pada `docker compose up -d` biasa, tidak lewat overlay, justru supaya
+tidak bisa terlewat: overlay membuat setiap `up` polos berikutnya diam-diam
+membuang labelnya dan CD berhenti tanpa error.
 
-Yang diperbarui **hanya chatbot-service**, karena hanya itu yang berlabel
-`com.centurylinklabs.watchtower.enable=true` dan watchtower dijalankan dengan
-`--label-enable`. Ini disengaja: `backend` dan `frontend` berasal dari repo
-milik orang lain, dan tanpa batasan tersebut setiap merge mereka langsung
-mendarat di produksi tanpa sepengetahuan siapa pun di sini. Keduanya diperbarui
-dengan sadar:
+Yang diperbarui adalah **backend, frontend, dan chatbot-service**, karena hanya
+ketiganya yang berlabel `wud.watch=true` dan WUD dijalankan dengan
+`WATCHBYDEFAULT=false`. Konsekuensinya: setiap merge ke `main` di repo mana pun
+dari ketiganya sampai ke produksi dalam lima menit, tanpa rollback otomatis.
+postgres, ollama, dan wwebjs-api tetap diperbarui dengan sadar.
 
-```bash
-docker compose pull backend frontend && docker compose up -d
-```
-
-Untuk rollback, sematkan tag tetap di `.env` lalu `up -d`. Selama `CHATBOT_IMAGE`
-tidak menunjuk `:latest`, watchtower tidak punya yang bisa diperbarui:
+Untuk rollback, sematkan tag tetap di `.env` lalu `up -d`. Selama image sebuah
+service tidak menunjuk `:latest`, WUD tidak punya yang bisa diperbarui:
 
 ```bash
+BACKEND_IMAGE=ghcr.io/nicholl2/backend-cakery:sha-<commit>
+FRONTEND_IMAGE=ghcr.io/azpdschool/toti-cakery-fe:sha-<commit>
 CHATBOT_IMAGE=ghcr.io/kevinilhamramadhan/chatbot-cakery:sha-<commit>
 ```
 
-Kalau paket GHCR-nya private, watchtower butuh kredensial: `docker login
-ghcr.io` dengan PAT ber-scope `read:packages`, lalu tambahkan berkas hasilnya
-sebagai volume pada service `watchtower`, yaitu
-`${HOME}/.docker/config.json:/config.json:ro`.
+Web UI WUD (versi yang jalan, versi yang tersedia, riwayat pembaruan) hanya
+mendengarkan di loopback VM. Bukanya dari laptop lewat SSH tunnel, lalu masuk
+sebagai `admin`:
+
+```bash
+ssh -L 3001:127.0.0.1:3001 <vm>   # lalu buka http://localhost:3001
+```
+
+Jangan pernah merutekannya lewat cloudflared: WUD memegang `docker.sock`, jadi
+akses ke UI-nya setara akses root ke mesin ini.
+
+Ketiga image saat ini publik, jadi WUD tidak butuh kredensial. Kalau salah satu
+paketnya dijadikan private, tambahkan `WUD_REGISTRY_GHCR_PRIVATE_USERNAME` dan
+`WUD_REGISTRY_GHCR_PRIVATE_TOKEN` (PAT ber-scope `read:packages`) pada service
+`wud`.
 
 ## Pindah ke server lain
 
