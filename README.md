@@ -276,6 +276,23 @@ dibatalkan di backend; pesanan lunas dan akun pembeli tidak disentuh.
 ./reset-percakapan.sh 0812xxxxxxxx -y   # langsung hapus
 ```
 
+## Menguji tool Owner dari nomor sendiri
+
+Nomor dianggap Owner oleh chatbot kalau ada user staf ber-role Owner yang
+aktif dengan nomor itu. Untuk berganti-ganti peran saat menguji:
+
+```bash
+./peran-uji.sh 0812xxxxxxxx owner     # jadikan Owner
+./peran-uji.sh 0812xxxxxxxx pembeli   # kembali jadi pembeli biasa
+./peran-uji.sh 0812xxxxxxxx           # lihat peran sekarang
+```
+
+Skrip ini memakai satu user khusus `uji-owner-<4 digit akhir>` (kata sandi
+acak, tidak untuk login, tidak menerima alihan chat) dan hanya menyalakan atau
+mematikannya. Nomor yang sudah dipakai user staf lain ditolak. Chatbot
+menyimpan daftar peran 5 menit, jadi perubahannya berlaku paling lambat 5 menit
+kemudian.
+
 ## Pindah ke server lain
 
 Domainnya **tidak perlu diubah sama sekali**. Cloudflare mengarahkan
