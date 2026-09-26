@@ -215,19 +215,29 @@ tidak bisa diperbaiki dari jauh:
 CI di ketiga repo kode sudah mendorong image ke GHCR pada setiap push ke `main`,
 lengkap dengan tag `:latest` dan `:sha-<commit>`. Yang dikerjakan repo ini
 adalah paruh keduanya: menariknya turun. Service `wud`
-([What's Up Docker](https://github.com/getwud/wud)) memeriksa digest `:latest`
-di GHCR tiap lima menit dan merekreasi container yang image-nya berubah.
+([What's Up Docker](https://github.com/getwud/wud)) memeriksa digest image
+**semua container yang sedang jalan** tiap 20 menit.
+
+| Container | Kalau ada image baru |
+|---|---|
+| backend, frontend, chatbot-service | diperbarui otomatis + email |
+| wwebjs-api, cloudflared | diperbarui otomatis + email |
+| postgres, ollama, wud | hanya email — perbarui dengan sadar |
+
+Yang diperbarui otomatis ditandai label `wud.trigger.include=docker.local,smtp.email`.
+Konsekuensinya: setiap merge ke `main` di repo aplikasi sampai ke produksi dalam
+paling lama 20 menit, tanpa rollback otomatis. Jadwalnya 20 menit, bukan 5,
+karena postgres, ollama, wwebjs-api, dan cloudflared ada di Docker Hub yang
+membatasi 100 permintaan manifest per 6 jam per IP; blokirnya juga menggagalkan
+`docker pull` biasa di mesin ini.
 
 Tidak ada langkah tambahan selain mengisi `WUD_ADMIN_PASSWORD` di `.env`. WUD
 ikut naik pada `docker compose up -d` biasa, tidak lewat overlay, justru supaya
-tidak bisa terlewat: overlay membuat setiap `up` polos berikutnya diam-diam
-membuang labelnya dan CD berhenti tanpa error.
+tidak bisa terlewat.
 
-Yang diperbarui adalah **backend, frontend, dan chatbot-service**, karena hanya
-ketiganya yang berlabel `wud.watch=true` dan WUD dijalankan dengan
-`WATCHBYDEFAULT=false`. Konsekuensinya: setiap merge ke `main` di repo mana pun
-dari ketiganya sampai ke produksi dalam lima menit, tanpa rollback otomatis.
-postgres, ollama, dan wwebjs-api tetap diperbarui dengan sadar.
+Memperbarui ollama sesudah ada email: `docker compose pull ollama && docker compose
+up -d ollama`, lalu `docker compose restart chatbot-service` supaya cache prompt
+dihangatkan lagi (tanpa itu giliran pertama tiap bahasa ±55 detik).
 
 Untuk rollback, sematkan tag tetap di `.env` lalu `up -d`. Selama image sebuah
 service tidak menunjuk `:latest`, WUD tidak punya yang bisa diperbarui:

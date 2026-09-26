@@ -45,7 +45,7 @@ services:
     pull_policy: always
     labels:
       # Diperbarui otomatis oleh WUD -- lihat blok wud di bawah.
-      wud.watch: "true"
+      wud.trigger.include: docker.local,smtp.email
     restart: unless-stopped
     logging: *logging
     environment:
@@ -73,7 +73,7 @@ services:
     pull_policy: always
     labels:
       # Diperbarui otomatis oleh WUD -- lihat blok wud di bawah.
-      wud.watch: "true"
+      wud.trigger.include: docker.local,smtp.email
     restart: unless-stopped
     logging: *logging
     depends_on:
@@ -133,6 +133,9 @@ services:
   # `docker compose up` diketik manual -- yaitu justru saat masalahnya tidak ada.
   wwebjs-api:
     image: avoylenko/wwebjs-api:latest
+    labels:
+      # Diperbarui otomatis oleh WUD -- lihat blok wud di bawah.
+      wud.trigger.include: docker.local,smtp.email
     restart: unless-stopped
     logging: *logging
     # ENTRYPOINT asli image: ["docker-entrypoint.sh"], CMD: ["npm","start"].
@@ -222,7 +225,7 @@ services:
     logging: *logging
     labels:
       # Diperbarui otomatis oleh WUD -- lihat blok wud di bawah.
-      wud.watch: "true"
+      wud.trigger.include: docker.local,smtp.email
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-production}
       WWEBJS_BASE_URL: http://wwebjs-api:3000
@@ -327,6 +330,9 @@ services:
 
   cloudflared:
     image: cloudflare/cloudflared:latest
+    labels:
+      # Diperbarui otomatis oleh WUD -- lihat blok wud di bawah.
+      wud.trigger.include: docker.local,smtp.email
     restart: unless-stopped
     logging: *logging
     command: ["--no-autoupdate", "--config", "/etc/cloudflared/config.yml", "tunnel", "run"]
@@ -341,20 +347,31 @@ services:
   # ── Pembaruan otomatis (CD) ───────────────────────────────────────────────
   # Paruh kedua dari CI di ketiga repo kode: CI mendorong image baru ke GHCR
   # sebagai :latest, WUD (What's Up Docker) yang menariknya ke sini. WUD memantau
-  # digest :latest di GHCR tiap lima menit; begitu berubah, trigger docker
-  # menarik image baru dan merekreasi container-nya dengan konfigurasi yang sama.
-  # Berbasis polling, jadi tidak ada port masuk dan tidak ada secret di GitHub.
+  # SEMUA container yang sedang jalan tiap 20 menit (digest tag-nya di registry);
+  # begitu berubah, trigger docker menarik image baru dan merekreasi container
+  # dengan konfigurasi yang sama, dan trigger email mengabari. Berbasis polling,
+  # jadi tidak ada port masuk dan tidak ada secret di GitHub.
   #
-  # WATCHBYDEFAULT=false adalah inti keamanannya: HANYA container berlabel
-  # wud.watch=true yang diperbarui, yaitu backend, frontend, dan
-  # chatbot-service. Artinya setiap merge ke main di repo mana pun dari ketiganya
-  # sampai ke produksi dalam lima menit. Yang lain sengaja dibiarkan manual:
+  # Yang diperbarui OTOMATIS:
+  #   backend, frontend, chatbot-service  -> setiap merge ke main sampai ke
+  #                                          produksi dalam <= 20 menit.
+  #   wwebjs-api                          -> WhatsApp Web berubah tanpa aba-aba;
+  #                                          26 Sep 2026 image lama menolak semua
+  #                                          kiriman foto sampai ditarik ulang.
+  #   cloudflared                         -> tunnel putus sebentar saja.
+  # Yang HANYA dikabari (tanpa label wud.trigger.include):
+  #   postgres  -> restart basis data sebaiknya disengaja.
+  #   ollama    -> image ±9 GB, dan restart membuat cache prompt dingin (giliran
+  #                pertama tiap bahasa ±55 detik sampai chatbot di-restart).
+  #   wud       -> tidak bisa mengganti dirinya sendiri dengan aman.
   #
-  #   postgres, ollama,  -> :latest mereka bisa berubah major. Khusus ollama,
-  #   wwebjs-api            image-nya sendiri ±2 GB.
+  # 20 menit, bukan 5: postgres, ollama, wwebjs-api, dan cloudflared ada di
+  # Docker Hub, yang membatasi 100 permintaan manifest per 6 jam per IP tanpa
+  # login. Empat image x 3 cek/jam x 6 jam = 72. Pada 5 menit angkanya 288, dan
+  # blokir 429 dari Docker Hub juga menggagalkan `docker pull` biasa di mesin ini.
   #
-  # chatbot-ingest tidak diberi label (restart: "no"). Kalau berkas FAQ berubah,
-  # jalankan sendiri: docker compose up -d chatbot-ingest
+  # Container yang sudah selesai (chatbot-ingest, cloudflared-init) tidak
+  # dipantau. Kalau berkas FAQ berubah: docker compose up -d chatbot-ingest
   #
   # Trigger docker, bukan dockercompose: dockercompose hanya menambahkan langkah
   # menulis ulang tag di berkas compose, yang tidak berguna untuk :latest, dan
@@ -370,9 +387,16 @@ services:
     restart: unless-stopped
     logging: *logging
     environment:
-      WUD_WATCHER_LOCAL_WATCHBYDEFAULT: "false"
-      WUD_WATCHER_LOCAL_CRON: "*/5 * * * *"
+      WUD_WATCHER_LOCAL_CRON: "*/20 * * * *"
+      # Docker Hub bawaannya tidak memantau digest; tag seperti 16-alpine dan
+      # latest hanya bisa diketahui berubah lewat digest-nya.
+      WUD_WATCHER_LOCAL_WATCHDIGESTDEFAULT: "true"
       WUD_TRIGGER_DOCKER_LOCAL_PRUNE: "true"
+      # Pembaruan otomatis hanya untuk container berlabel
+      # wud.trigger.include=docker.local. Label itu sekaligus daftar lengkap
+      # trigger-nya, jadi smtp.email ikut ditulis di sana; container tanpa label
+      # tetap mendapat email karena trigger email include-by-default.
+      WUD_TRIGGER_DOCKER_LOCAL_INCLUDEBYDEFAULT: "false"
       # Autentikasi UI wajib: WUD menolak start tanpa akun admin.
       WUD_AUTH_ADMIN_USER: admin
       WUD_AUTH_ADMIN_PASSWORD: ${WUD_ADMIN_PASSWORD:?WUD_ADMIN_PASSWORD wajib diisi di .env}
