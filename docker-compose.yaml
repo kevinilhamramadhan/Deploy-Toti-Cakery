@@ -25,6 +25,11 @@ services:
   # ── Data ──────────────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
+    labels:
+      # WUD: pantau digest tag 16-alpine (rilis patch 16.x), jangan menawarkan
+      # tag lain -- tanpa ini yang ditawarkan "19beta4-trixie".
+      wud.tag.include: ^16-alpine$
+      wud.watch.digest: "true"
     restart: unless-stopped
     logging: *logging
     environment:
@@ -384,6 +389,10 @@ services:
   # Buka dari laptop lewat SSH tunnel:  ssh -L 3001:127.0.0.1:3001 <vm>
   wud:
     image: getwud/wud:9
+    labels:
+      # Sama seperti postgres: hanya digest tag 9, bukan nama branch acak.
+      wud.tag.include: ^9$
+      wud.watch.digest: "true"
     restart: unless-stopped
     logging: *logging
     environment:
