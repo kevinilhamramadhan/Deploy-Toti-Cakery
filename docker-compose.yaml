@@ -388,6 +388,11 @@ services:
     logging: *logging
     environment:
       WUD_WATCHER_LOCAL_CRON: "*/20 * * * *"
+      # Node mencoba tiap alamat IP hanya 250 ms (happy eyeballs); dari jaringan
+      # VM ini jabat tangan ke registry-1.docker.io lebih lambat dari itu, jadi
+      # semua alamat gagal ETIMEDOUT dan keempat image Docker Hub tidak pernah
+      # terpantau (terukur 26 Sep 2026). GHCR tidak terpengaruh.
+      NODE_OPTIONS: --network-family-autoselection-attempt-timeout=2000
       # Docker Hub bawaannya tidak memantau digest; tag seperti 16-alpine dan
       # latest hanya bisa diketahui berubah lewat digest-nya.
       WUD_WATCHER_LOCAL_WATCHDIGESTDEFAULT: "true"
