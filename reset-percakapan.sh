@@ -68,7 +68,7 @@ async def batalkan():
         (alamat,),
     ).fetchall():
         try:
-            await backend.cancel_order(ref)
+            await backend.cancel_order(ref, alamat)
             print(f"  pesanan {ref} dibatalkan di backend")
         except Exception as e:
             print(f"  GAGAL membatalkan pesanan {ref} di backend ({str(e).splitlines()[0]}); "
