@@ -1,0 +1,33 @@
+# Paruh kedua CI ketiga repo kode: begitu image :latest masuk GHCR, CI repo itu
+# memanggil workflow ini, dan runner di server produksi menarik image tersebut
+# lalu membuat ulang container-nya. Bisa juga dijalankan manual dari tab Actions.
+name: Deploy
+run-name: deploy ${{ inputs.service }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      service:
+        description: Service yang di-deploy
+        required: true
+        type: choice
+        options: [chatbot-service, backend, frontend]
+
+# Per service: deploy yang sedang jalan tidak pernah dibatalkan, dan permintaan
+# untuk service lain tidak saling menggusur dari antrean.
+concurrency:
+  group: deploy-${{ inputs.service }}
+  cancel-in-progress: false
+
+permissions: {}
+
+jobs:
+  deploy:
+    name: deploy ke produksi
+    runs-on: [self-hosted, toti-prod]
+    timeout-minutes: 15
+    steps:
+      - name: Tarik image baru dan buat ulang container
+        env:
+          SERVICE: ${{ inputs.service }}
+        run: sudo -n -H -u riset03 /usr/local/bin/toti-deploy "$SERVICE"
