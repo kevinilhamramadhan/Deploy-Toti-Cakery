@@ -6,6 +6,12 @@
 #   ./peran-uji.sh 081234567890 pembeli   # kembali jadi pembeli biasa
 #   ./peran-uji.sh 081234567890           # lihat peran sekarang
 #
+# Nomor milik user staf SUNGGUHAN (mis. nomor Owner yang dipakai menguji) juga
+# bisa: "pembeli" melepas nomor itu sementara dari user-nya dan mencatatnya di
+# .peran-uji-parkir-<nomor>, "owner" mengembalikannya persis seperti semula.
+# Selama dilepas, user itu tetap bisa login Admin Site; yang hilang hanya
+# pengenalan nomornya oleh chatbot (laporan, larangan memesan, takeover).
+#
 # Cara kerjanya: chatbot menganggap sebuah nomor Owner kalau ada user staf
 # ber-role Owner yang AKTIF dengan nomor itu (GET /users/owner-numbers). Skrip
 # ini memelihara satu user khusus bernama "uji-owner-<4 digit akhir>" dan cuma
@@ -32,6 +38,7 @@ if ! [[ "$nomor" =~ ^62[0-9]{8,13}$ ]]; then
 fi
 mode=${2:-status}
 nama="uji-owner-${nomor: -4}"
+parkir=".peran-uji-parkir-$nomor"
 # Kolom phone_number diisi apa adanya dari Admin Site ("0857…", "+62 857…"),
 # jadi pembandingnya dinormalkan dulu ke bentuk 62… di SQL.
 sama_nomor="regexp_replace(regexp_replace(u.phone_number, '[^0-9]', '', 'g'), '^0', '62') = '$nomor'"
@@ -59,6 +66,18 @@ case "$mode" in
     status
     ;;
   owner)
+    if [ -s "$parkir" ]; then
+      # Nomor ini tadinya milik user sungguhan: kembalikan ke tiap user dengan
+      # tulisan aslinya, lalu selesai (user uji tidak diperlukan).
+      while IFS='|' read -r u asli; do
+        [ -n "$u" ] || continue
+        psql_ -c "UPDATE users SET phone_number = '${asli//\'/\'\'}' WHERE username = '${u//\'/\'\'}'" >/dev/null
+      done < "$parkir"
+      rm -f "$parkir"
+      status
+      echo "Berlaku di chatbot paling lambat 5 menit lagi."
+      exit 0
+    fi
     lain=$(psql_ -c "SELECT username FROM users u WHERE $sama_nomor AND username <> '$nama'")
     if [ -n "$lain" ]; then
       echo "Nomor ini sudah dipakai user staf lain ($lain). Ubah perannya lewat Admin Site." >&2
@@ -78,6 +97,19 @@ case "$mode" in
     echo "Berlaku di chatbot paling lambat 5 menit lagi."
     ;;
   pembeli)
+    lain=$(psql_ -c "SELECT u.username || '|' || u.phone_number FROM users u
+                     WHERE $sama_nomor AND u.username <> '$nama'")
+    if [ -n "$lain" ]; then
+      if [ -s "$parkir" ]; then
+        echo "Sudah ada catatan $parkir; jalankan mode owner dulu." >&2
+        exit 1
+      fi
+      printf '%s\n' "$lain" > "$parkir"
+      psql_ -c "UPDATE users u SET phone_number = NULL
+                WHERE $sama_nomor AND u.username <> '$nama'" >/dev/null
+      echo "Nomor dilepas sementara dari: $(printf '%s' "$lain" | cut -d'|' -f1 | paste -sd, -)"
+      echo "Kembalikan dengan: $0 $nomor owner"
+    fi
     psql_ -c "UPDATE users SET is_active = false WHERE username = '$nama'" >/dev/null
     status
     echo "Berlaku di chatbot paling lambat 5 menit lagi."
