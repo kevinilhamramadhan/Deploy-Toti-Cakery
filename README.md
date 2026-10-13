@@ -212,21 +212,49 @@ tidak bisa diperbaiki dari jauh:
 
 ## Pembaruan otomatis
 
-CI di ketiga repo kode sudah mendorong image ke GHCR pada setiap push ke `main`,
+CI di ketiga repo kode mendorong image ke GHCR pada setiap push ke `main`,
 lengkap dengan tag `:latest` dan `:sha-<commit>`. Yang dikerjakan repo ini
-adalah paruh keduanya: menariknya turun. Service `wud`
-([What's Up Docker](https://github.com/getwud/wud)) memeriksa digest image
-**semua container yang sedang jalan** tiap 20 menit.
+adalah paruh keduanya: menariknya turun. Ada dua jalur.
 
-| Container | Kalau ada image baru |
-|---|---|
-| backend, frontend, chatbot-service | diperbarui otomatis + email |
-| wwebjs-api, cloudflared | diperbarui otomatis + email |
-| postgres, ollama, wud | hanya email — perbarui dengan sadar |
+| Container | Jalur | Kalau ada image baru |
+|---|---|---|
+| backend, frontend, chatbot-service | runner GitHub Actions | di-deploy begitu CI selesai |
+| wwebjs-api, cloudflared | WUD | diperbarui otomatis + email, dicek tiap 20 menit |
+| postgres, ollama, wud | WUD | hanya email — perbarui dengan sadar |
 
-Yang diperbarui otomatis ditandai label `wud.trigger.include=docker.local,smtp.email`.
-Konsekuensinya: setiap merge ke `main` di repo aplikasi sampai ke produksi dalam
-paling lama 20 menit, tanpa rollback otomatis. Jadwalnya 20 menit, bukan 5,
+### Service aplikasi: runner GitHub Actions
+
+```
+push ke main (repo aplikasi)
+  └─ ci.yaml   tes, build, push image ke GHCR
+      └─ cd.yaml   memanggil deploy.yml di repo ini (secret DEPLOY_TOKEN)
+          └─ deploy.yml   jalan di runner server: toti-deploy <service>
+```
+
+- **Runner** self-hosted hanya terdaftar di repo ini (label `toti-prod`). Ia
+  yang menghubungi GitHub dari dalam, jadi server tidak membuka port apa pun.
+- **`DEPLOY_TOKEN`** adalah fine-grained PAT dengan satu izin: Actions
+  read/write pada repo ini. Disimpan sebagai secret di ketiga repo aplikasi.
+  Kalau kedaluwarsa, `cd.yaml` merah dan image baru tidak ter-deploy sampai
+  token diganti.
+- **`/usr/local/bin/toti-deploy`** di server menjalankan `docker compose pull`
+  lalu `up -d --no-deps --wait` untuk satu service, memakai compose dan `.env`
+  yang ada di server. Run di tab Actions merah kalau container baru tidak
+  sampai *healthy*.
+- Runner berjalan sebagai akun `ghrunner` yang tidak masuk grup `docker`.
+  Lewat sudoers ia hanya boleh memanggil `toti-deploy` untuk tiga service itu.
+  Repo ini publik, jadi workflow dari pull request fork wajib disetujui dulu
+  (Settings → Actions → General).
+
+Deploy ulang manual: tab Actions → Deploy → Run workflow, atau
+`gh workflow run deploy.yml -f service=backend`.
+
+### Image pihak ketiga: WUD
+
+Service `wud` ([What's Up Docker](https://github.com/getwud/wud)) memeriksa
+digest image container selain tiga service aplikasi tiap 20 menit. Yang
+diperbarui otomatis ditandai label `wud.trigger.include=docker.local,smtp.email`;
+tiga service aplikasi berlabel `wud.watch=false`. Jadwalnya 20 menit, bukan 5,
 karena postgres, ollama, wwebjs-api, dan cloudflared ada di Docker Hub yang
 membatasi 100 permintaan manifest per 6 jam per IP; blokirnya juga menggagalkan
 `docker pull` biasa di mesin ini.
@@ -240,7 +268,8 @@ up -d ollama`, lalu `docker compose restart chatbot-service` supaya cache prompt
 dihangatkan lagi (tanpa itu giliran pertama tiap bahasa ±55 detik).
 
 Untuk rollback, sematkan tag tetap di `.env` lalu `up -d`. Selama image sebuah
-service tidak menunjuk `:latest`, WUD tidak punya yang bisa diperbarui:
+service tidak menunjuk `:latest`, deploy berikutnya menarik tag yang sama dan
+tidak mengganti apa pun:
 
 ```bash
 BACKEND_IMAGE=ghcr.io/nicholl2/backend-cakery:sha-<commit>
@@ -259,10 +288,9 @@ ssh -L 3001:127.0.0.1:3001 <vm>   # lalu buka http://localhost:3001
 Jangan pernah merutekannya lewat cloudflared: WUD memegang `docker.sock`, jadi
 akses ke UI-nya setara akses root ke mesin ini.
 
-Ketiga image saat ini publik, jadi WUD tidak butuh kredensial. Kalau salah satu
-paketnya dijadikan private, tambahkan `WUD_REGISTRY_GHCR_PRIVATE_USERNAME` dan
-`WUD_REGISTRY_GHCR_PRIVATE_TOKEN` (PAT ber-scope `read:packages`) pada service
-`wud`.
+Ketiga image aplikasi saat ini publik, jadi server menariknya tanpa kredensial.
+Kalau salah satu paketnya dijadikan private, jalankan `docker login ghcr.io` di
+server sebagai akun yang menjalankan compose (PAT ber-scope `read:packages`).
 
 ## Mengulang percakapan satu nomor
 

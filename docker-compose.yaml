@@ -49,8 +49,8 @@ services:
     image: ${BACKEND_IMAGE:-ghcr.io/nicholl2/backend-cakery:latest}
     pull_policy: always
     labels:
-      # Diperbarui otomatis oleh WUD -- lihat blok wud di bawah.
-      wud.trigger.include: docker.local,smtp.email
+      # Di-deploy runner GitHub Actions, bukan WUD -- lihat blok wud di bawah.
+      wud.watch: "false"
     restart: unless-stopped
     logging: *logging
     environment:
@@ -86,8 +86,8 @@ services:
     image: ${FRONTEND_IMAGE:-ghcr.io/azpdschool/toti-cakery-fe:latest}
     pull_policy: always
     labels:
-      # Diperbarui otomatis oleh WUD -- lihat blok wud di bawah.
-      wud.trigger.include: docker.local,smtp.email
+      # Di-deploy runner GitHub Actions, bukan WUD -- lihat blok wud di bawah.
+      wud.watch: "false"
     restart: unless-stopped
     logging: *logging
     depends_on:
@@ -247,8 +247,8 @@ services:
     restart: unless-stopped
     logging: *logging
     labels:
-      # Diperbarui otomatis oleh WUD -- lihat blok wud di bawah.
-      wud.trigger.include: docker.local,smtp.email
+      # Di-deploy runner GitHub Actions, bukan WUD -- lihat blok wud di bawah.
+      wud.watch: "false"
     environment:
       ENVIRONMENT: ${ENVIRONMENT:-production}
       WWEBJS_BASE_URL: http://wwebjs-api:3000
@@ -376,17 +376,18 @@ services:
       frontend:
         condition: service_started
 
-  # ── Pembaruan otomatis (CD) ───────────────────────────────────────────────
-  # Paruh kedua dari CI di ketiga repo kode: CI mendorong image baru ke GHCR
-  # sebagai :latest, WUD (What's Up Docker) yang menariknya ke sini. WUD memantau
-  # SEMUA container yang sedang jalan tiap 20 menit (digest tag-nya di registry);
-  # begitu berubah, trigger docker menarik image baru dan merekreasi container
-  # dengan konfigurasi yang sama, dan trigger email mengabari. Berbasis polling,
-  # jadi tidak ada port masuk dan tidak ada secret di GitHub.
+  # ── Pembaruan otomatis image pihak ketiga ─────────────────────────────────
+  # backend, frontend, dan chatbot-service TIDAK lewat sini: ketiganya di-deploy
+  # runner GitHub Actions di mesin ini begitu CI repo masing-masing selesai
+  # (.github/workflows/deploy.yml di repo ini), dan berlabel wud.watch=false.
+  #
+  # WUD (What's Up Docker) mengurus sisanya. Ia memantau container lain yang
+  # sedang jalan tiap 20 menit (digest tag-nya di registry); begitu berubah,
+  # trigger docker menarik image baru dan merekreasi container dengan
+  # konfigurasi yang sama, dan trigger email mengabari. Berbasis polling, jadi
+  # tidak ada port masuk.
   #
   # Yang diperbarui OTOMATIS:
-  #   backend, frontend, chatbot-service  -> setiap merge ke main sampai ke
-  #                                          produksi dalam <= 20 menit.
   #   wwebjs-api                          -> WhatsApp Web berubah tanpa aba-aba;
   #                                          26 Sep 2026 image lama menolak semua
   #                                          kiriman foto sampai ditarik ulang.
